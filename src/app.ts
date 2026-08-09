@@ -21,20 +21,40 @@ app.get('/health', (req: Request, res: Response) => {
 // Centralized Error Handling Middleware complying with Constraints #1, #2, #8
 export function errorHandlerMiddleware(err: unknown, req: Request, res: Response, _next: NextFunction) {
   if (err instanceof AppError) {
-    logger.error(`Application Error [${err.code}]: ${err.message}`, {
+    if (err.isOperational) {
+      logger.error(`Application Error [${err.code}]: ${err.message}`, {
+        operation: 'ErrorHandlerMiddleware',
+        path: req.path,
+        method: req.method,
+        statusCode: err.statusCode,
+        code: err.code,
+        context: err.context,
+        error: err,
+      });
+
+      return res.status(err.statusCode).json({
+        error: err.message,
+        code: err.code,
+        context: process.env.NODE_ENV !== 'production' ? err.context : undefined,
+      });
+    }
+
+    // Non-operational AppError (programmer bug / unexpected internal invariant failure)
+    logger.error(`Non-operational Bug [${err.code}]: ${err.message}`, {
       operation: 'ErrorHandlerMiddleware',
       path: req.path,
       method: req.method,
+      isOperational: false,
       statusCode: err.statusCode,
       code: err.code,
       context: err.context,
       error: err,
     });
 
-    return res.status(err.statusCode).json({
-      error: err.message,
-      code: err.code,
-      context: process.env.NODE_ENV !== 'production' ? err.context : undefined,
+    return res.status(500).json({
+      error: 'Internal server error',
+      code: 'INTERNAL_ERROR',
+      details: process.env.NODE_ENV !== 'production' ? err.message : undefined,
     });
   }
 

@@ -4,19 +4,22 @@ export class AppError extends Error {
   public readonly statusCode: number;
   public readonly code: string;
   public readonly context: ErrorContext;
+  public readonly isOperational: boolean;
 
   constructor(
     message: string,
     statusCode: number = 500,
     code: string = 'INTERNAL_ERROR',
     context: ErrorContext = {},
-    cause?: unknown
+    cause?: unknown,
+    isOperational: boolean = true
   ) {
     super(message, cause !== undefined ? { cause } : undefined);
     this.name = this.constructor.name;
     this.statusCode = statusCode;
     this.code = code;
-    this.context = context;
+    this.context = { ...context };
+    this.isOperational = isOperational;
 
     if (cause !== undefined && this.cause === undefined) {
       Object.defineProperty(this, 'cause', {
@@ -46,20 +49,20 @@ export class AppError extends Error {
 }
 
 export class ValidationError extends AppError {
-  constructor(message: string, context: ErrorContext = {}, cause?: unknown) {
-    super(message, 400, 'VALIDATION_ERROR', context, cause);
+  constructor(message: string, context: ErrorContext = {}, cause?: unknown, isOperational: boolean = true) {
+    super(message, 400, 'VALIDATION_ERROR', context, cause, isOperational);
   }
 }
 
 export class AuthenticationError extends AppError {
-  constructor(message: string, context: ErrorContext = {}, cause?: unknown) {
-    super(message, 401, 'AUTHENTICATION_ERROR', context, cause);
+  constructor(message: string, context: ErrorContext = {}, cause?: unknown, isOperational: boolean = true) {
+    super(message, 401, 'AUTHENTICATION_ERROR', context, cause, isOperational);
   }
 }
 
 export class NotFoundError extends AppError {
-  constructor(message: string, context: ErrorContext = {}, cause?: unknown) {
-    super(message, 404, 'NOT_FOUND_ERROR', context, cause);
+  constructor(message: string, context: ErrorContext = {}, cause?: unknown, isOperational: boolean = true) {
+    super(message, 404, 'NOT_FOUND_ERROR', context, cause, isOperational);
   }
 }
 
@@ -72,7 +75,8 @@ export class ExternalServiceError extends AppError {
     message: string,
     upstreamStatusCode?: number,
     context: ErrorContext = {},
-    cause?: unknown
+    cause?: unknown,
+    isOperational: boolean = true
   ) {
     super(
       `External Service Error [${serviceName}]: ${message}`,
@@ -83,7 +87,8 @@ export class ExternalServiceError extends AppError {
         serviceName,
         upstreamStatusCode,
       },
-      cause
+      cause,
+      isOperational
     );
     this.serviceName = serviceName;
     this.upstreamStatusCode = upstreamStatusCode;
@@ -91,13 +96,13 @@ export class ExternalServiceError extends AppError {
 }
 
 export class DatabaseError extends AppError {
-  constructor(message: string, context: ErrorContext = {}, cause?: unknown) {
-    super(message, 500, 'DATABASE_ERROR', context, cause);
+  constructor(message: string, context: ErrorContext = {}, cause?: unknown, isOperational: boolean = true) {
+    super(message, 500, 'DATABASE_ERROR', context, cause, isOperational);
   }
 }
 
 export class CryptographicError extends AppError {
-  constructor(message: string, context: ErrorContext = {}, statusCode: number = 500, cause?: unknown) {
-    super(message, statusCode, 'CRYPTOGRAPHIC_ERROR', context, cause);
+  constructor(message: string, context: ErrorContext = {}, statusCode: number = 500, cause?: unknown, isOperational: boolean = true) {
+    super(message, statusCode, 'CRYPTOGRAPHIC_ERROR', context, cause, isOperational);
   }
 }

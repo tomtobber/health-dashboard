@@ -165,4 +165,35 @@ describe('AppError JSON Serialization & Error Middleware Verification', () => {
     expect(parsed).not.toHaveProperty('cause');
     expect(jsonString).not.toContain('Low-level database connection reset by peer');
   });
+
+  test('Non-operational AppError (isOperational=false) is handled as internal server error 500 by middleware', async () => {
+    const testApp = express();
+    testApp.use(express.json());
+
+    testApp.get('/non-operational-error', (_req: Request, _res: Response, next: NextFunction) => {
+      next(new AppError('Internal assertion failed', 500, 'BUG_ERROR', {}, undefined, false));
+    });
+
+    testApp.use(errorHandlerMiddleware);
+
+    const res = await request(testApp).get('/non-operational-error');
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Internal server error');
+    expect(res.body.code).toBe('INTERNAL_ERROR');
+    expect(res.body.details).toBe('Internal assertion failed');
+  });
+
+  test('AppError creates a defensive shallow copy of the context object', () => {
+    const mutableContext = { fieldName: 'email', count: 1 };
+    const error = new ValidationError('Validation failed', mutableContext);
+
+    // Mutate the original context object after error construction
+    mutableContext.fieldName = 'password';
+    mutableContext.count = 99;
+
+    expect(error.context).toEqual({ fieldName: 'email', count: 1 });
+    expect(error.context.fieldName).toBe('email');
+    expect(error.context.count).toBe(1);
+  });
 });
