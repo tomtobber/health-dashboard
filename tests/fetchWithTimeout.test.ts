@@ -145,4 +145,25 @@ describe('fetchWithTimeout Utility', () => {
     await rejectionExpectation;
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
+
+  test('g. EXHAUSTED RETRIES ON 5xx: Rejects with ExternalServiceError when 5xx persists through all retries', async () => {
+    jest.useFakeTimers();
+
+    const mockFetch = jest.fn().mockResolvedValue(new Response('Internal Server Error', { status: 500 }));
+    global.fetch = mockFetch;
+
+    const promise = fetchWithTimeout('https://api.example.com/persistent-500', {
+      serviceName: 'UpstreamService',
+      retries: 2,
+      backoffMs: 100,
+    });
+
+    const rejectionExpectation = expect(promise).rejects.toThrow(ExternalServiceError);
+
+    await jest.advanceTimersByTimeAsync(100);
+    await jest.advanceTimersByTimeAsync(200);
+
+    await rejectionExpectation;
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
 });

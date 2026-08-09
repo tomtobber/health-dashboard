@@ -40,22 +40,40 @@ export async function fetchWithTimeout(
         return response;
       }
 
-      // Retry on 5xx transient server errors
-      if (response.status >= 500 && attempt <= retries) {
-        logger.warn('Transient server error from external service, retrying', {
-          operation: 'fetchWithTimeout',
+      // Handle 5xx transient server errors
+      if (response.status >= 500) {
+        if (attempt <= retries) {
+          logger.warn('Transient server error from external service, retrying', {
+            operation: 'fetchWithTimeout',
+            serviceName,
+            url,
+            attempt,
+            status: response.status,
+          });
+          await new Promise((resolve) => setTimeout(resolve, backoffMs * Math.pow(2, attempt - 1)));
+          continue;
+        }
+
+        throw new ExternalServiceError(
           serviceName,
-          url,
-          attempt,
-          status: response.status,
-        });
-        await new Promise((resolve) => setTimeout(resolve, backoffMs * Math.pow(2, attempt - 1)));
-        continue;
+          `HTTP ${response.status} server error from ${serviceName} after ${retries} retries`,
+          response.status,
+          {
+            url,
+            attempt,
+            status: response.status,
+            retries,
+          }
+        );
       }
 
       return response;
     } catch (err: unknown) {
       clearTimeout(timeoutId);
+
+      if (err instanceof ExternalServiceError) {
+        throw err;
+      }
 
       const isAbort = err instanceof Error && err.name === 'AbortError';
       const errorMessage = isAbort ? `Request timed out after ${timeoutMs}ms` : (err instanceof Error ? err.message : String(err));
