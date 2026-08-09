@@ -153,10 +153,11 @@ export function verifyState<T = Record<string, unknown>>(signedStateToken: strin
     const key = getEncryptionKey();
     expectedHmac = crypto.createHmac('sha256', key).update(base64Data).digest('base64url');
   } catch (err: unknown) {
+    if (err instanceof CryptographicError) throw err;
     throw new CryptographicError(
       'Failed to compute state token HMAC verification signature',
       { operation: 'verifyState' },
-      500,
+      400,
       err
     );
   }

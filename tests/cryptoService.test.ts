@@ -15,13 +15,23 @@ describe('cryptoService', () => {
     expect(decrypted).toEqual(plainToken);
   });
 
-  test('throws CryptographicError if encrypted payload authTag is tampered with', () => {
+  test('throws CryptographicError with cause if encrypted payload authTag is tampered with', () => {
     const plainToken = 'secret-refresh-token';
     const encrypted = encryptToken(plainToken);
     const parsed = JSON.parse(encrypted);
     parsed.tag = '00000000000000000000000000000000';
 
-    expect(() => decryptToken(JSON.stringify(parsed))).toThrow(CryptographicError);
+    try {
+      decryptToken(JSON.stringify(parsed));
+      fail('Should have thrown CryptographicError');
+    } catch (err: unknown) {
+      expect(err).toBeInstanceOf(CryptographicError);
+      const cryptoErr = err as CryptographicError;
+      expect(cryptoErr.statusCode).toBe(500);
+      expect(cryptoErr.cause).toBeDefined();
+      expect(typeof cryptoErr.cause).toBe('object');
+      expect((cryptoErr.cause as Error).message).toMatch(/Unsupported state|authenticate/i);
+    }
   });
 
   test('signs and verifies state token with HMAC-SHA256', () => {
@@ -35,12 +45,19 @@ describe('cryptoService', () => {
     expect(verifiedPayload.userId).toBe('user-uuid-123');
   });
 
-  test('rejects tampered state token during verification (CSRF protection)', () => {
+  test('rejects tampered state token during verification (CSRF protection) with 400 status', () => {
     const payload = { userId: 'user-uuid-123' };
     const signedToken = signState(payload);
     const [base64Data] = signedToken.split('.');
     const tamperedToken = `${base64Data}.invalid_hmac_signature`;
 
-    expect(() => verifyState(tamperedToken)).toThrow(CryptographicError);
+    try {
+      verifyState(tamperedToken);
+      fail('Should have thrown CryptographicError');
+    } catch (err: unknown) {
+      expect(err).toBeInstanceOf(CryptographicError);
+      const cryptoErr = err as CryptographicError;
+      expect(cryptoErr.statusCode).toBe(400);
+    }
   });
 });
