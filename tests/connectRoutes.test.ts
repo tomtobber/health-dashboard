@@ -2,6 +2,8 @@ import request from 'supertest';
 import { app } from '../src/app';
 import jwt from 'jsonwebtoken';
 import { env } from '../src/config/env';
+import { encryptToken } from '../src/services/cryptoService';
+import { CryptographicError } from '../src/errors/AppError';
 
 describe('Connect Routes API (Google OAuth)', () => {
   let authToken: string;
@@ -26,13 +28,30 @@ describe('Connect Routes API (Google OAuth)', () => {
     expect(res.body.requestedScopes).toContain('health_metrics_and_measurements');
   });
 
-  test('GET /api/connect/google/callback fails with 500 CryptographicError on tampered state parameter', async () => {
+  test('GET /api/connect/google/callback fails with 400 Bad Request CryptographicError on tampered client state parameter', async () => {
     const res = await request(app)
       .get('/api/connect/google/callback?code=mock_code&state=invalid_state');
 
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(400);
     expect(res.body.code).toBe('CRYPTOGRAPHIC_ERROR');
     expect(res.body.error).toMatch(/state token/i);
+  });
+
+  test('Server-side crypto key failure retains 500 status code', () => {
+    const originalKey = env.ENCRYPTION_KEY;
+    const envObj = env as unknown as Record<string, string>;
+    try {
+      envObj.ENCRYPTION_KEY = 'invalid_non_hex_key_$$$';
+      expect(() => encryptToken('test')).toThrow(CryptographicError);
+      try {
+        encryptToken('test');
+      } catch (err: unknown) {
+        expect(err).toBeInstanceOf(CryptographicError);
+        expect((err as CryptographicError).statusCode).toBe(500);
+      }
+    } finally {
+      envObj.ENCRYPTION_KEY = originalKey;
+    }
   });
 
   test('GET /api/connect/google/callback succeeds with valid code and signed state', async () => {

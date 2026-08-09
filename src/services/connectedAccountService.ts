@@ -51,11 +51,14 @@ export async function upsertConnectedAccount(
     });
   } catch (dbErr: unknown) {
     if (dbErr instanceof DatabaseError) throw dbErr;
-    throw new DatabaseError('Failed to persist connected account in database transaction', {
-      operation: 'upsertConnectedAccount',
-      userId,
-      provider,
-      cause: dbErr instanceof Error ? dbErr.message : String(dbErr),
-    });
+    throw new DatabaseError(
+      'Failed to persist connected account in database transaction',
+      {
+        operation: 'upsertConnectedAccount',
+        userId,
+        provider,
+      },
+      dbErr
+    );
   }
 }

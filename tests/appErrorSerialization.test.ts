@@ -148,4 +148,21 @@ describe('AppError JSON Serialization & Error Middleware Verification', () => {
     // Note: details field contains the internal message when NODE_ENV !== 'production'
     expect(res.body.details).toBe(internalErrorMessage);
   });
+
+  test('AppError cause chaining stores original error object and omits cause from JSON.stringify output', () => {
+    const rootCause = new Error('Low-level database connection reset by peer');
+    const dbError = new DatabaseError('Database operation failed', { table: 'users' }, rootCause);
+
+    expect(dbError.cause).toBe(rootCause);
+    expect(dbError.cause).toBeInstanceOf(Error);
+    expect((dbError.cause as Error).message).toBe('Low-level database connection reset by peer');
+
+    const jsonString = JSON.stringify(dbError);
+    const parsed = JSON.parse(jsonString);
+
+    expect(parsed).toHaveProperty('message', 'Database operation failed');
+    expect(parsed).toHaveProperty('code', 'DATABASE_ERROR');
+    expect(parsed).not.toHaveProperty('cause');
+    expect(jsonString).not.toContain('Low-level database connection reset by peer');
+  });
 });
