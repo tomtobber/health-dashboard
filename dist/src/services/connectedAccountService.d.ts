@@ -1,0 +1,1 @@
+export declare function upsertConnectedAccount(userId: string, provider: string, accessToken: string, refreshToken: string, scopes: string[], dbInstance?: import("drizzle-orm/node-postgres").NodePgDatabase<typeof import("../db/schema")>, onBeforeCommit?: (tx: unknown) => Promise<void> | void): Promise<void>;
