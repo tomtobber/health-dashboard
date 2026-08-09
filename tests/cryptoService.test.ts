@@ -1,5 +1,6 @@
 import { encryptToken, decryptToken, signState, verifyState } from '../src/services/cryptoService';
 import { CryptographicError } from '../src/errors/AppError';
+import { env } from '../src/config/env';
 
 describe('cryptoService', () => {
   test('encrypts and decrypts OAuth token correctly', () => {
@@ -13,6 +14,26 @@ describe('cryptoService', () => {
 
     const decrypted = decryptToken(encrypted);
     expect(decrypted).toEqual(plainToken);
+  });
+
+  test('encryptToken attaches original cause when key parsing or cipher fails', () => {
+    const originalKey = env.ENCRYPTION_KEY;
+    const envObj = env as unknown as Record<string, string>;
+    try {
+      envObj.ENCRYPTION_KEY = 'invalid_non_hex_key_$$$';
+      try {
+        encryptToken('test_payload');
+        fail('Should have thrown CryptographicError');
+      } catch (err: unknown) {
+        expect(err).toBeInstanceOf(CryptographicError);
+        const cryptoErr = err as CryptographicError;
+        expect(cryptoErr.statusCode).toBe(500);
+        expect(cryptoErr.cause).toBeDefined();
+        expect(typeof cryptoErr.cause).toBe('object');
+      }
+    } finally {
+      envObj.ENCRYPTION_KEY = originalKey;
+    }
   });
 
   test('throws CryptographicError with cause if encrypted payload authTag is tampered with', () => {
