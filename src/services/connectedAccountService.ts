@@ -3,6 +3,8 @@ import { connectedAccounts } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { encryptToken } from './cryptoService';
 import { DatabaseError } from '../errors/AppError';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import type * as schema from '../db/schema';
 
 export async function upsertConnectedAccount(
   userId: string,
@@ -10,14 +12,14 @@ export async function upsertConnectedAccount(
   accessToken: string,
   refreshToken: string,
   scopes: string[],
-  dbInstance = defaultDb,
+  dbInstance: NodePgDatabase<typeof schema> = defaultDb,
   onBeforeCommit?: (tx: unknown) => Promise<void> | void
 ): Promise<void> {
   const encryptedAccessToken = encryptToken(accessToken);
   const encryptedRefreshToken = encryptToken(refreshToken);
 
   try {
-    await (dbInstance as typeof defaultDb).transaction(async (tx) => {
+    await dbInstance.transaction(async (tx) => {
       const existing = await tx
         .select()
         .from(connectedAccounts)
