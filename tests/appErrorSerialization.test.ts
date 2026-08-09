@@ -92,14 +92,14 @@ describe('AppError JSON Serialization & Error Middleware Verification', () => {
     }
   });
 
-  test('Omits context from AppError and details from unhandled errors when NODE_ENV=production', async () => {
+  test('Test 1: context/details are omitted in production (NODE_ENV=production)', async () => {
     process.env.NODE_ENV = 'production';
 
     const testApp = express();
     testApp.use(express.json());
 
     testApp.get('/prod-app-error', (_req: Request, _res: Response, next: NextFunction) => {
-      next(new ValidationError('Validation failed', { sensitiveInternalId: 998877 }));
+      next(new ValidationError('Validation failed with context', { sensitiveInternalId: 998877 }));
     });
 
     testApp.get('/prod-unhandled-error', (_req: Request, _res: Response, next: NextFunction) => {
@@ -111,39 +111,41 @@ describe('AppError JSON Serialization & Error Middleware Verification', () => {
     // 1. Assert AppError in production omits context
     const appErrRes = await request(testApp).get('/prod-app-error');
     expect(appErrRes.status).toBe(400);
-    expect(appErrRes.body.error).toBe('Validation failed');
+    expect(appErrRes.body.error).toBe('Validation failed with context');
     expect(appErrRes.body.code).toBe('VALIDATION_ERROR');
+    expect('context' in appErrRes.body).toBe(false);
     expect(appErrRes.body.context).toBeUndefined();
 
-    // 2. Assert unhandled error in production omits details
+    // 2. Assert unhandled error in production omits details and uses generic error string
     const unhandledRes = await request(testApp).get('/prod-unhandled-error');
     expect(unhandledRes.status).toBe(500);
     expect(unhandledRes.body.error).toBe('Internal server error');
     expect(unhandledRes.body.code).toBe('INTERNAL_ERROR');
+    expect('details' in unhandledRes.body).toBe(false);
     expect(unhandledRes.body.details).toBeUndefined();
   });
 
-  test('Catch-all branch hides real error message and returns generic Internal server error when NODE_ENV=production', async () => {
-    process.env.NODE_ENV = 'production';
-
+  test('Test 2: the catch-all branch for non-AppError exceptions', async () => {
+    // NODE_ENV defaults to test (not production)
     const testApp = express();
     testApp.use(express.json());
 
-    const sensitiveErrorMsg = 'Uncaught fatal exception: Redis secret key /var/run/secrets leaked';
+    const internalErrorMessage = 'some internal message';
 
-    testApp.get('/throw-plain-error', (_req: Request, _res: Response, next: NextFunction) => {
-      next(new Error(sensitiveErrorMsg));
+    testApp.get('/raw-error', (_req: Request, _res: Response, next: NextFunction) => {
+      next(new Error(internalErrorMessage));
     });
 
     testApp.use(errorHandlerMiddleware);
 
-    const res = await request(testApp).get('/throw-plain-error');
+    const res = await request(testApp).get('/raw-error');
 
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({
-      error: 'Internal server error',
-      code: 'INTERNAL_ERROR',
-    });
-    expect(JSON.stringify(res.body)).not.toContain(sensitiveErrorMsg);
+    // Asserts error field is generic "Internal server error", NOT "some internal message"
+    expect(res.body.error).toBe('Internal server error');
+    expect(res.body.error).not.toBe(internalErrorMessage);
+    expect(res.body.code).toBe('INTERNAL_ERROR');
+    // Note: details field contains the internal message when NODE_ENV !== 'production'
+    expect(res.body.details).toBe(internalErrorMessage);
   });
 });
