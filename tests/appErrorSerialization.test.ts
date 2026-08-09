@@ -166,7 +166,7 @@ describe('AppError JSON Serialization & Error Middleware Verification', () => {
     expect(jsonString).not.toContain('Low-level database connection reset by peer');
   });
 
-  test('Non-operational AppError (isOperational=false) is handled as internal server error 500 by middleware', async () => {
+  test('Non-operational AppError (isOperational=false) is handled as internal server error 500 by middleware and respects NODE_ENV', async () => {
     const testApp = express();
     testApp.use(express.json());
 
@@ -176,12 +176,22 @@ describe('AppError JSON Serialization & Error Middleware Verification', () => {
 
     testApp.use(errorHandlerMiddleware);
 
-    const res = await request(testApp).get('/non-operational-error');
+    // 1. In non-production (test env): details field contains the message
+    process.env.NODE_ENV = 'test';
+    const devRes = await request(testApp).get('/non-operational-error');
+    expect(devRes.status).toBe(500);
+    expect(devRes.body.error).toBe('Internal server error');
+    expect(devRes.body.code).toBe('INTERNAL_ERROR');
+    expect(devRes.body.details).toBe('Internal assertion failed');
 
-    expect(res.status).toBe(500);
-    expect(res.body.error).toBe('Internal server error');
-    expect(res.body.code).toBe('INTERNAL_ERROR');
-    expect(res.body.details).toBe('Internal assertion failed');
+    // 2. In production: details field is omitted entirely
+    process.env.NODE_ENV = 'production';
+    const prodRes = await request(testApp).get('/non-operational-error');
+    expect(prodRes.status).toBe(500);
+    expect(prodRes.body.error).toBe('Internal server error');
+    expect(prodRes.body.code).toBe('INTERNAL_ERROR');
+    expect('details' in prodRes.body).toBe(false);
+    expect(prodRes.body.details).toBeUndefined();
   });
 
   test('AppError creates a defensive shallow copy of the context object', () => {
