@@ -38,6 +38,7 @@ Review this log every 2 weeks (or every ~20 PRs, whichever comes first):
 ## Log
 <!-- Add new entries above this line, most recent first -->
 Date	Pattern	Where it showed up	Status
+2026-08-09	Error middleware gates sensitive details (unhandled exception messages) using a blocklist check (NODE_ENV !== 'production') rather than an allowlist — any environment other than 'production' leaks raw internal error messages via details field	src/app.ts (errorHandlerMiddleware)	Logged
 2026-08-08	Error subclass properties set via super() inherit non-enumerable behavior, breaking JSON serialization silently — passes tests that check .message directly but fails tests that check serialized output	src/errors/AppError.ts	Promoted to rule #2
 2026-08-08	`crypto.timingSafeEqual` called without comparing buffer lengths first	src/services/cryptoService.ts	Logged
 2026-08-08	Drizzle ORM `sql` imported from `drizzle-orm/pg-core` instead of `drizzle-orm`	src/db/schema.ts	Logged
