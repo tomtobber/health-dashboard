@@ -47,7 +47,7 @@ export class GoogleHealthAdapter implements ProviderAdapter {
   }
 
   public async authenticate(code: string, redirectUri?: string): Promise<OAuthTokens> {
-    if (this.clientId.includes('mock') || env.NODE_ENV === 'test') {
+    if (env.NODE_ENV === 'test') {
       return {
         accessToken: `mock_access_token_${code}`,
         refreshToken: `mock_refresh_token_${code}`,
@@ -104,7 +104,7 @@ export class GoogleHealthAdapter implements ProviderAdapter {
       });
     }
 
-    if (this.clientId.includes('mock') || env.NODE_ENV === 'test') {
+    if (env.NODE_ENV === 'test') {
       return {
         accessToken: `mock_refreshed_access_token_${Date.now()}`,
         refreshToken,
