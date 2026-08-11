@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import { env } from '../src/config/env';
 import { encryptToken } from '../src/services/cryptoService';
 import { CryptographicError } from '../src/errors/AppError';
+import { GoogleHealthAdapter } from '../src/adapters/googleHealthAdapter';
 
 describe('Connect Routes API (Google OAuth)', () => {
   let authToken: string;
@@ -13,7 +14,7 @@ describe('Connect Routes API (Google OAuth)', () => {
     authToken = jwt.sign(mockUser, env.JWT_SECRET, { expiresIn: '1h' });
   });
 
-  test('GET /api/connect/google/authorize generates signed state and required scopes', async () => {
+  test('GET /api/connect/google/authorize generates signed state and required full scope URIs in authUrl', async () => {
     const res = await request(app)
       .get('/api/connect/google/authorize')
       .set('Authorization', `Bearer ${authToken}`);
@@ -21,11 +22,20 @@ describe('Connect Routes API (Google OAuth)', () => {
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('authUrl');
     expect(res.body).toHaveProperty('signedState');
-    expect(res.body.authUrl).toContain('accounts.google.com');
-    expect(res.body.authUrl).toContain('activity_and_fitness');
-    expect(res.body.authUrl).toContain('health_metrics_and_measurements');
-    expect(res.body.requestedScopes).toContain('activity_and_fitness');
-    expect(res.body.requestedScopes).toContain('health_metrics_and_measurements');
+
+    const expectedScopes = [
+      'openid',
+      'https://www.googleapis.com/auth/userinfo.email',
+      'https://www.googleapis.com/auth/userinfo.profile',
+      'https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly',
+      'https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly',
+    ];
+
+    expect(res.body.requestedScopes).toEqual(expectedScopes);
+    expect(res.body.requestedScopes).toEqual(GoogleHealthAdapter.SCOPES);
+
+    const expectedScopeParam = expectedScopes.map((s) => encodeURIComponent(s)).join('+');
+    expect(res.body.authUrl).toContain(`scope=${expectedScopeParam}`);
   });
 
   test('GET /api/connect/google/callback fails with 400 Bad Request CryptographicError on tampered client state parameter', async () => {
@@ -67,7 +77,6 @@ describe('Connect Routes API (Google OAuth)', () => {
     expect(callbackRes.status).toBe(200);
     expect(callbackRes.body.message).toContain('successfully connected');
     expect(callbackRes.body.provider).toBe('google_health');
-    expect(callbackRes.body.scopes).toContain('activity_and_fitness');
-    expect(callbackRes.body.scopes).toContain('health_metrics_and_measurements');
+    expect(callbackRes.body.scopes).toEqual(GoogleHealthAdapter.SCOPES);
   });
 });

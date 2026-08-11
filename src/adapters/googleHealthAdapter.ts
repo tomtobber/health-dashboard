@@ -17,10 +17,10 @@ export class GoogleHealthAdapter implements ProviderAdapter {
 
   public static SCOPES = [
     'openid',
-    'email',
-    'profile',
-    'activity_and_fitness',
-    'health_metrics_and_measurements'
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/userinfo.profile',
+    'https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly',
+    'https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly',
   ];
 
   private clientId: string;
