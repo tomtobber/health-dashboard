@@ -1,4 +1,4 @@
-import { z } from 'zod';
+﻿import { z } from 'zod';
 import * as dotenv from 'dotenv';
 import { ValidationError } from '../errors/AppError';
 
@@ -18,6 +18,7 @@ export const envSchema = z
     DATABASE_URL: z.string().default('postgresql://postgres:postgres@localhost:5432/health_dashboard'),
     JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters long'),
     ENCRYPTION_KEY: z.string().length(64, 'ENCRYPTION_KEY must be a 64-character hex string (32 bytes)'),
+    CRON_SECRET: z.string().min(16, 'CRON_SECRET must be at least 16 characters long').default('local-dev-cron-secret-min-16-chars'),
     GOOGLE_CLIENT_ID: z.string().min(1, 'GOOGLE_CLIENT_ID is required'),
     GOOGLE_CLIENT_SECRET: z.string().min(1, 'GOOGLE_CLIENT_SECRET is required'),
     GOOGLE_REDIRECT_URI: z.string().url('GOOGLE_REDIRECT_URI must be a valid URL'),

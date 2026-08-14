@@ -1,0 +1,340 @@
+﻿# Project Context — Personal Health Dashboard
+
+## Vision
+
+A personal (initially single/small-user) web application that aggregates
+health and lifestyle data from multiple sources — starting with the Google
+Health API — normalizes it into one data model, lets the user add their
+own custom metrics, and surfaces it through customizable charts and
+(eventually) lightweight statistical insights.
+
+This document is the single source of truth for architecture decisions.
+It should be loaded as always-active context. Update it whenever a decision
+changes — do not let decisions live only in conversation history.
+
+## Phase Breakdown
+
+Work proceeds one phase at a time. Do not implement a future phase early,
+but every phase must be built in a way that does not block or require
+rework of a later phase. See "Architecture Principles" below for the
+invariants that enforce this.
+
+1. **Connect flow** — OAuth 2.0 flow letting a user link their Google
+   Health account. Creates a user + connected-account record with stored,
+   encrypted tokens.
+2. **Sync + storage** — Retrieve the user's data (webhook-driven, with a
+   polling reconciliation job as backup) and store it in a normalized,
+   provider-agnostic data model.
+3. **Custom metrics** — Let the user define and log their own metric types
+   directly in the app (e.g. calories, alcohol units), stored in the same
+   normalized model as synced data.
+4. **Other integrations** — Support additional third-party data sources
+   beyond Google Health (e.g. a calorie-tracking app), each plugging into
+   the same sync + storage model via a common adapter interface.
+5. **Customizable charts** — User-configurable dashboard: pick metric(s),
+   time range, aggregation, and chart type; save as named views.
+6. **Conclusions / insights** — Start with descriptive statistics only
+   (personal baselines, trend detection, correlation between user-chosen
+   metric pairs). Explicitly out of scope until this phase, and even then,
+   causal or prescriptive claims require citing established
+   physiology/sports-science methods rather than inventing new ones —
+   always frame results as correlation in the user's own data, never as
+   diagnosis or medical advice.
+
+## Data Model
+
+### `connected_accounts`
+Generic across providers from day one, even though only Google Health
+exists in phase 1.
+
+| column | notes |
+|---|---|
+| user_id | FK to `users.id`, `ON DELETE CASCADE` |
+| provider | e.g. `google_health`, future: other integrations |
+| access_token / refresh_token | encrypted at rest |
+| scopes | |
+| status | active / disabled / needs_reauth |
+
+### `metric_entries`
+One normalized table for **all** data, regardless of source — synced,
+manual, or from future integrations.
+
+| column | notes |
+|---|---|
+| id | surrogate PK (uuid) |
+| user_id | FK to `users.id`, `ON DELETE CASCADE` |
+| provider | `google_health`, `manual`, future integration names |
+| metric_type | normalized key, e.g. `heart_rate`, `steps`, `vo2_max_daily` |
+| external_id | provider's native point ID, when one exists (raw stream only — see uniqueness note below) |
+| start_time / end_time | always set; equal for point-in-time samples |
+| value_numeric | numeric, duration (seconds), or boolean (0/1) |
+| value_text | category label (for `metric_definitions.value_type = category`) |
+| unit | |
+| source_stream | `raw` \| `reconciled` (Google Health exposes both) |
+| raw_payload | jsonb, original provider response |
+| updated_at | |
+| deleted_at | nullable; soft delete, see below |
+
+**Uniqueness / dedup**, enforced via upsert (`ON CONFLICT`), not
+insert-then-check. Raw and reconciled streams are keyed differently —
+they are not guaranteed to share a stable ID (the reconcile endpoint
+merges multiple sources and identifies points via `dataPointName`, not
+the raw `name`/point-ID field our `external_id` is based on):
+- **Raw stream, with a native point ID**: unique on
+  `(user_id, provider, metric_type, external_id)`.
+- **Reconciled stream, or any interval/rollup type without a stable
+  point ID** (e.g. steps): unique on
+  `(user_id, provider, metric_type, source_stream, start_time, end_time)`.
+- `reconciled` stream values take priority over `raw` stream values on
+  conflict.
+
+**Deletion handling**: the API has no reliable per-data-point delete
+notification (only an account-level "user deletion" webhook event is
+planned). Deletions are therefore detected during the reconciliation
+sweep: diff what the API currently returns for a window against what's
+stored, and set `deleted_at` on anything no longer present. Soft delete,
+not hard delete — preserves history and is reversible if a point
+reappears after a sync delay.
+
+**Account deletion**: `ON DELETE CASCADE` on both FKs above — deleting a
+`users` row removes all their `connected_accounts` and `metric_entries`
+immediately. For this app, deleting a user always means "remove
+everything," so `RESTRICT` would just add friction and `SET NULL` would
+leave meaningless orphaned rows. If a reversible/soft "delete my account"
+UX is ever wanted, that's an application-layer flag
+(`users.scheduled_deletion_at` + a background job) acted on later — not
+a reason to avoid CASCADE at the database level.
+
+### `metric_definitions` (phase 3+)
+User-defined custom metric types (name, unit, value type: numeric /
+duration / boolean / category), referenced by `metric_entries.metric_type`
+for that user. `value_type` determines whether a given entry's data lives
+in `metric_entries.value_numeric` or `.value_text` (see above).
+
+## Data Volume & Resolution Strategy
+
+Some data types (heart rate confirmed; potentially others at similar
+intraday resolution) are returned by the API at very high native
+frequency — observed as low as ~5-second intervals, i.e. 8,000+ points
+per user per day for heart rate alone. Storing every type at native
+resolution indefinitely is not the default assumption for this project;
+most data types (daily VO2 max, sleep sessions, weight, etc.) are
+naturally low-frequency and are unaffected by this section.
+
+- **Downsample high-frequency types at ingestion**, before writing to
+  `metric_entries` — e.g. aggregate to 1-minute or 5-minute
+  min/max/avg rather than storing every raw sample. This keeps the
+  normalized store performant for charts and correlation analysis
+  without needing aggregation logic in every read path.
+- Add an `aggregation` column to `metric_entries` (`raw`, `1m_avg`,
+  `5m_avg`, `daily_avg`, ...) so any consumer of the data knows what
+  resolution it's looking at.
+- The full-resolution response may still be kept in `raw_payload` for a
+  short rolling window (days, not months/years) if fine-grained
+  drill-down is ever needed — not retained indefinitely at full
+  resolution.
+- This is decided per data type based on what the API actually returns
+  natively — apply it where it's needed, not as a blanket rule.
+
+## Observability & Data Quality
+
+Sync completeness and cross-stream duplication are not assumed —
+both are checked deliberately rather than trusted implicitly.
+
+**Sync auditability** — every sync operation (webhook-triggered,
+reconciliation, or backfill) writes a row to a `sync_runs` table
+(user_id, provider, metric_type, trigger, requested_range, status,
+points_fetched, points_upserted, pages_fetched, error, started/completed
+timestamps). This is queryable state, not just application logs — it's
+what answers "when did we last successfully sync X for this user."
+
+**Subscription health** — Google auto-disables webhook subscriptions
+for inactive subscribers. A scheduled job periodically confirms each
+subscription is still active via the subscribers API and re-subscribes
+if not; webhook coverage should never silently degrade.
+
+**Gap detection** — flag suspicious patterns from `sync_runs` /
+`metric_entries` (e.g. a zero-data day sandwiched between two
+normal-density days) as likely sync failures rather than treating all
+gaps as equally explainable (device off, etc.).
+
+**Cross-stream duplication is prevented structurally, not by
+convention.** Storage-level duplicates are already impossible (see
+uniqueness constraints above). Query-level double-counting — e.g.
+summing both raw and reconciled values for an overlapping window — is
+avoided by never querying `metric_entries` directly for
+charts/analysis/export. Instead, all reads go through one canonical
+query path that, per user/metric_type/time-window, prefers reconciled
+data and falls back to raw only where reconciled is absent. This
+removes the risk rather than relying on every future query remembering
+to filter by `source_stream`.
+
+**Raw-vs-reconciled divergence check** — a periodic job compares raw and
+reconciled values for the same window and logs (not blocks) cases where
+they differ meaningfully. Useful signal on how much reconciliation is
+actually correcting, and would surface if the `external_id`/key
+assumptions above are behaving unexpectedly.
+
+## Architecture Principles (do not violate, regardless of phase)
+
+1. All data, from any source, is written through an adapter into the
+   single normalized `metric_entries` schema. No phase-specific or
+   provider-specific tables.
+2. Every data source (Google Health, future integrations, manual entry)
+   implements the same adapter interface: `authenticate`, `sync`,
+   `mapToNormalizedSchema`. Adding a new source should not require
+   touching the storage or chart layers.
+3. Sync strategy is **per data type, not uniform** — Google Health API
+   webhooks currently only cover steps, altitude, distance, floors,
+   weight, and sleep. For those, webhooks trigger immediate syncs, with
+   a scheduled reconciliation job as a backup for missed/delayed
+   deliveries and disabled subscriptions. For everything without webhook
+   support — notably heart rate, HRV, SpO2, respiratory rate, VO2 max —
+   **polling is the primary and only sync mechanism**, not a backup.
+   Confirm this list against current docs periodically; it may expand.
+4. All writes are idempotent upserts keyed as described above — running
+   sync or reconciliation repeatedly, on overlapping ranges, must never
+   create duplicates.
+5. Manual entries and custom metrics are first-class citizens of the same
+   schema, not a bolted-on separate system — they should appear in charts
+   identically to synced data.
+6. Any statistics or "conclusions" work must clearly distinguish
+   descriptive/correlational output from causal or prescriptive claims.
+   No diagnostic language.
+7. Charts, analysis, and exports never query `metric_entries` directly
+   for aggregation — they go through the canonical reconciled-preferred
+   read path (see Observability & Data Quality). No feature reimplements
+   raw-vs-reconciled precedence logic on its own.
+
+## Initial Backfill
+
+When a user first connects, pulling their available history is a
+separate task from ongoing sync, not a variant of it:
+- Triggered right after OAuth completes, but runs as an **async/queued
+  background job** — never synchronously in the OAuth callback. A
+  months-long history at 5-second heart rate resolution can take
+  significant time to paginate through.
+- The UI shows a syncing/in-progress state and displays data as it
+  arrives, rather than blocking until backfill is fully complete.
+- Pulls up to 1 full year (365 days) by looping across multiple 14-day
+  (for high-frequency types) and 90-day (for low-frequency types) API
+  request windows.
+- Resumable and idempotent (`ON CONFLICT DO UPDATE`) so an interrupted
+  backfill safely restarts or continues without duplicate rows.
+
+## Known Constraints From the Provider
+
+- Google Health API scopes used here are Restricted — production use with
+  real (non-test) users requires a Google privacy/security review. For
+  personal/small-scale use, register accounts as OAuth test users instead.
+  **Use the literal scope URLs below — do not substitute the older Google
+  Fit API scopes (`fitness.*`), which are a different API and can cause
+  token rejection if mixed with Google Health scopes on the same client:**
+  - `https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly`
+  - `https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly`
+  - `https://www.googleapis.com/auth/googlehealth.sleep.readonly`
+- Most data types support ~90 days per query; heart rate, active minutes,
+  total calories, and calories-in-heart-rate-zone are capped at 14 days per
+  request — batch requests accordingly.
+- Failed webhook deliveries retry for up to 7 days before being dropped;
+  the reconciliation job is the safety net beyond that window (see
+  Architecture Principles for which data types this actually applies to).
+- Webhook subscriber endpoints **must be public HTTPS (TLS 1.2+)** —
+  Google performs a verification challenge against the endpoint at
+  subscription time. See "Deployment & Staging Environment" for the
+  resolved hosting decision. This requirement applies to the backend
+  regardless of frontend choice (web page vs. native app) — that's a
+  separate, independent decision deferred to Phase 5.
+
+## Deployment & Staging Environment
+
+Resolved ahead of Phase 2, since webhook work hard-requires a public
+HTTPS endpoint and reconciliation/backfill logic needs to be tested
+against data that persists between sessions (Phase 1 used ephemeral,
+discard-on-exit Docker Postgres instances — not sufficient going
+forward).
+
+- **Backend hosting: Render**, region **Frankfurt** — matches the Neon
+  region above to keep backend-to-database latency low and data within
+  the EU. Deliberately *not* Google Cloud Run,
+  despite already having a GCP project for OAuth — that project is an
+  OAuth identity container, not compute infrastructure, so reusing it
+  saves little. Render avoids GCP billing-account/IAM overhead, deploys
+  directly from the GitHub repo (same repo the CI pipeline already runs
+  against), and gives a public HTTPS endpoint with no separate tunnel
+  needed once deployed.
+- **Cold-Start Awareness on Free Tier**: On Render's Free tier, the web
+  service sleeps after 15 minutes of inactivity. Both incoming Google
+  webhook deliveries and scheduled cron pings incur a ~30–50s cold-start
+  delay when waking the instance. Google retries delayed/failed webhook
+  deliveries for up to 7 days, and the reconciliation sweep acts as the
+  ultimate backstop for missed points.
+- **Scheduling Architecture (GitHub Actions Scheduled Workflow)**:
+  Periodic background synchronization (reconciliation sweeps, un-webhooked
+  metric polling, subscription health checks) is triggered via a **GitHub
+  Actions scheduled cron workflow** (`.github/workflows/scheduled-sync.yml`)
+  calling `POST /api/sync/scheduled`.
+- **State-Driven Execution ("What's Actually Due")**: The scheduled
+  endpoint does **not** blindly trust the external ping's timing. It
+  inspects the database (`sync_runs` and `connected_accounts`) to
+  determine which users, un-webhooked metrics, and reconciliation windows
+  have actually elapsed their required interval and are due for syncing.
+- **Database: Neon** (Postgres), region **AWS Europe (Frankfurt,
+  `aws-eu-central-1`)**. Chosen for two reasons: (1) latency — the
+  pairing that matters is backend-server-to-database, not
+  user-to-database, so this should match wherever Render is deployed;
+  (2) data residency — this project stores real personal health data
+  (GDPR special category), and the developer is EU-based, so keeping
+  storage in the EU is a deliberate default, not just a performance
+  choice. **Region is permanent per Neon project** — cannot be changed
+  without creating a new project and migrating data, so this isn't a
+  "fix it later" setting. Free tier, zero GCP setup, standard
+  Postgres — works identically with Drizzle regardless of host, and
+  easy to swap for Supabase later if ever needed. Free-tier
+  compute suspends after 5 minutes idle to save compute allowance, but
+  storage is persistent and unaffected — data is never at risk from
+  inactivity, unlike Render's free Postgres. First query after idle wakes
+  compute in milliseconds.
+- **Test vs. live branch separation**: two Neon branches exist —
+  `DATABASE_URL` (in local `.env`) points at the **test branch**, used
+  by the app locally, the test suite, and CI. The **primary/live branch**
+  connection string is not stored in `.env` or anywhere in the project
+  at all right now — deliberately, so there's nothing for code or tests
+  to accidentally reference. It gets added only when actually going
+  live with the real Google account connection, as a conscious step, not
+  something left in place "just in case." Never point tests, CI, or a
+  Render deployment meant for real use at the same connection string
+  simultaneously used for destructive testing (cascade-delete/rollback
+  tests specifically).
+- **OAuth project stays Google Cloud** — unrelated to the above. The
+  `GOOGLE_REDIRECT_URI` just needs to be a real HTTPS URL matching what's
+  registered as an Authorized redirect URI in Google Cloud Console;
+  where the backend actually runs is irrelevant to Google's OAuth flow.
+- **Auth**: custom JWT/bcrypt (already built in Phase 1), not Neon Auth.
+  Considered and deliberately declined — Neon Auth would couple identity
+  to the Neon platform specifically, working against the low-lock-in
+  reasoning behind choosing Neon in the first place, and its
+  multi-tenant/org features solve a bigger problem than a personal-scale
+  app has. Revisit only if this ever grows into genuine multi-user
+  signup beyond a handful of manually-added accounts.
+- **Secrets Management**: `ENCRYPTION_KEY`, `JWT_SECRET`,
+  `GOOGLE_CLIENT_SECRET`, `CRON_SECRET`, and `DATABASE_URL` must be set
+  via Render's environment/secrets config (and `CRON_SECRET` in GitHub
+  Actions repository secrets), **never** committed or left as
+  `.env.example` values.
+- **Test-user expiry**: while the app remains in Google's "Testing"
+  publishing status, authorizations from test users (including the
+  developer's own account) expire after 7 days regardless of hosting —
+  expect to periodically re-run the connect flow until the app goes
+  through Google's verification process.
+
+## Open Questions
+
+Remaining items — none block Phase 2 from starting, each is scoped to
+the phase it affects:
+- Exact downsampling interval(s) per high-frequency data type, and how
+  long full-resolution `raw_payload` data is retained before pruning —
+  Phase 2.
+- Whether phase 4's adapter interface should be generalized now or
+  hardcoded for 1–2 known integrations first — Phase 4.
+- Frontend choice: web page vs. native app — Phase 5.

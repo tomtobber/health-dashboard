@@ -1,17 +1,42 @@
-import request from 'supertest';
+﻿import request from 'supertest';
 import { app } from '../src/app';
 import jwt from 'jsonwebtoken';
 import { env } from '../src/config/env';
 import { encryptToken } from '../src/services/cryptoService';
 import { CryptographicError } from '../src/errors/AppError';
 import { GoogleHealthAdapter } from '../src/adapters/googleHealthAdapter';
+import { db, pool } from '../src/db';
+import { users } from '../src/db/schema';
+import { eq } from 'drizzle-orm';
 
 describe('Connect Routes API (Google OAuth)', () => {
   let authToken: string;
-  const mockUser = { id: 'test-user-id-123', email: 'test@example.com' };
+  let testUserId: string;
 
-  beforeAll(() => {
-    authToken = jwt.sign(mockUser, env.JWT_SECRET, { expiresIn: '1h' });
+  beforeAll(async () => {
+    // Clean up if exists
+    await pool.query('DELETE FROM users WHERE email = $1', ['connect_test@example.com']);
+
+    const [user] = await db
+      .insert(users)
+      .values({
+        email: 'connect_test@example.com',
+        passwordHash: 'connect_hash_123',
+      })
+      .returning();
+
+    testUserId = user.id;
+    authToken = jwt.sign({ id: testUserId, email: user.email }, env.JWT_SECRET, { expiresIn: '1h' });
+  });
+
+  afterAll(async () => {
+    try {
+      if (testUserId) {
+        await db.delete(users).where(eq(users.id, testUserId));
+      }
+    } finally {
+      await pool.end().catch(() => {});
+    }
   });
 
   test('GET /api/connect/google/authorize generates signed state and required full scope URIs in authUrl', async () => {
@@ -29,6 +54,7 @@ describe('Connect Routes API (Google OAuth)', () => {
       'https://www.googleapis.com/auth/userinfo.profile',
       'https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly',
       'https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly',
+      'https://www.googleapis.com/auth/googlehealth.sleep.readonly',
     ];
 
     expect(res.body.requestedScopes).toEqual(expectedScopes);

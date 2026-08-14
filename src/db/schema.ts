@@ -1,5 +1,4 @@
-import { pgTable, uuid, text, timestamp, doublePrecision, integer, jsonb, uniqueIndex, index } from 'drizzle-orm/pg-core';
-import { sql } from 'drizzle-orm';
+﻿import { pgTable, uuid, text, timestamp, doublePrecision, integer, jsonb, uniqueIndex, index } from 'drizzle-orm/pg-core';
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -40,11 +39,9 @@ export const metricEntries = pgTable('metric_entries', {
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
 }, (table) => ({
   rawStreamExternalIdIdx: uniqueIndex('raw_stream_external_id_idx')
-    .on(table.userId, table.provider, table.metricType, table.sourceStream, table.externalId)
-    .where(sql`external_id IS NOT NULL`),
+    .on(table.userId, table.provider, table.metricType, table.sourceStream, table.externalId),
   reconciledStreamIntervalIdx: uniqueIndex('reconciled_stream_interval_idx')
-    .on(table.userId, table.provider, table.metricType, table.sourceStream, table.startTime, table.endTime)
-    .where(sql`external_id IS NULL`),
+    .on(table.userId, table.provider, table.metricType, table.sourceStream, table.startTime, table.endTime),
   canonicalQueryIdx: index('canonical_query_idx').on(table.userId, table.metricType, table.startTime, table.endTime),
 }));
 

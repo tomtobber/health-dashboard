@@ -1,4 +1,4 @@
-export interface OAuthTokens {
+﻿export interface OAuthTokens {
   accessToken: string;
   refreshToken: string;
   expiresIn?: number;
@@ -10,14 +10,19 @@ export interface SyncParams {
   startDate: Date;
   endDate: Date;
   metricTypes?: string[];
+  accessToken?: string;
+  trigger?: 'webhook' | 'reconciliation' | 'polling' | 'backfill';
+  sourceStream?: 'raw' | 'reconciled';
 }
 
 export interface SyncResult {
   syncRunId: string;
   pointsFetched: number;
   pointsUpserted: number;
+  pagesFetched?: number;
   status: 'completed' | 'failed';
   error?: string;
+  mappedEntries?: NormalizedMetricEntry[];
 }
 
 export interface NormalizedMetricEntry {
@@ -35,6 +40,12 @@ export interface NormalizedMetricEntry {
   rawPayload?: Record<string, unknown>;
 }
 
+export interface SubscriptionHealthResult {
+  active: boolean;
+  subscriptionId?: string;
+  error?: string;
+}
+
 export interface ProviderAdapter {
   providerName: string;
   getAuthUrl(signedState: string): string;
@@ -42,4 +53,6 @@ export interface ProviderAdapter {
   refreshToken(refreshToken: string): Promise<OAuthTokens>;
   sync(params: SyncParams): Promise<SyncResult>;
   mapToNormalizedSchema(rawPoint: Record<string, unknown>): NormalizedMetricEntry[];
+  createSubscription?(publicWebhookUrl: string, accessToken: string): Promise<SubscriptionHealthResult>;
+  checkSubscriptionHealth?(subscriptionId?: string, accessToken?: string): Promise<SubscriptionHealthResult>;
 }

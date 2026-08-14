@@ -1,3 +1,4 @@
+﻿import { triggerInitialBackfill } from '../services/backfillService';
 import { Router, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { authenticateToken, AuthenticatedRequest } from './authRoutes';
@@ -7,6 +8,7 @@ import { upsertConnectedAccount } from '../services/connectedAccountService';
 import { db } from '../db';
 import { connectedAccounts } from '../db/schema';
 import { eq } from 'drizzle-orm';
+import { env } from '../config/env';
 import { ValidationError, DatabaseError } from '../errors/AppError';
 import { logger } from '../utils/logger';
 import { asyncHandler } from '../utils/asyncHandler';
@@ -59,7 +61,7 @@ connectRouter.get(
 
     const tokens = await googleAdapter.authenticate(code);
 
-    if (process.env.NODE_ENV === 'test') {
+    if (process.env.NODE_ENV === 'test' && !process.env.DATABASE_URL?.includes('neon.tech')) {
       return res.json({
         message: 'Google Health account successfully connected',
         provider: 'google_health',
@@ -77,7 +79,26 @@ connectRouter.get(
       tokens.scopes
     );
 
-    logger.info('Google Health account successfully connected', {
+    // Register webhook subscription asynchronously without blocking callback
+    setImmediate(() => {
+      void (async () => {
+        try {
+          const webhookUrl = `${env.APP_BASE_URL}/api/webhooks/google`;
+          await googleAdapter.createSubscription(webhookUrl, tokens.accessToken);
+        } catch (subErr: unknown) {
+          logger.warn('Google Health subscription registration failed in background', {
+            operation: 'googleCallback:createSubscription',
+            userId: statePayload.userId,
+            error: subErr instanceof Error ? subErr.message : String(subErr),
+          });
+        }
+      })();
+    });
+
+    // Trigger initial 1-year historical backfill asynchronously
+    triggerInitialBackfill(statePayload.userId, 365);
+
+    logger.info('Google Health account successfully connected and backfill started', {
       operation: 'googleCallback',
       userId: statePayload.userId,
     });
@@ -99,7 +120,7 @@ connectRouter.get(
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<unknown> => {
     const userId = req.user!.id;
 
-    if (process.env.NODE_ENV === 'test') {
+    if (process.env.NODE_ENV === 'test' && !process.env.DATABASE_URL?.includes('neon.tech')) {
       return res.json({
         connectedAccounts: [
           { provider: 'google_health', status: 'active', scopes: GoogleHealthAdapter.SCOPES },
@@ -137,7 +158,7 @@ connectRouter.post(
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<unknown> => {
     const userId = req.user!.id;
 
-    if (process.env.NODE_ENV === 'test') {
+    if (process.env.NODE_ENV === 'test' && !process.env.DATABASE_URL?.includes('neon.tech')) {
       return res.json({ message: 'Disconnected Google Health account successfully' });
     }
 

@@ -1,4 +1,4 @@
-import { loadEnv } from '../src/config/env';
+﻿import { loadEnv } from '../src/config/env';
 import { ValidationError } from '../src/errors/AppError';
 
 describe('Environment Variable Startup Validation', () => {
@@ -7,6 +7,7 @@ describe('Environment Variable Startup Validation', () => {
     DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/health_dashboard',
     JWT_SECRET: 'super-secret-jwt-key-min-32-chars-length',
     ENCRYPTION_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    CRON_SECRET: 'real-cron-secret-min-16-chars-long',
     GOOGLE_CLIENT_ID: 'real-google-client-id.apps.googleusercontent.com',
     GOOGLE_CLIENT_SECRET: 'real-google-client-secret-12345',
     GOOGLE_REDIRECT_URI: 'http://localhost:3000/api/connect/google/callback',
@@ -19,6 +20,7 @@ describe('Environment Variable Startup Validation', () => {
     expect(loaded.GOOGLE_CLIENT_ID).toBe('real-google-client-id.apps.googleusercontent.com');
     expect(loaded.GOOGLE_CLIENT_SECRET).toBe('real-google-client-secret-12345');
     expect(loaded.GOOGLE_REDIRECT_URI).toBe('http://localhost:3000/api/connect/google/callback');
+    expect(loaded.CRON_SECRET).toBe('real-cron-secret-min-16-chars-long');
   });
 
   test('fails at startup with ValidationError when GOOGLE_CLIENT_ID is missing', () => {
@@ -71,6 +73,14 @@ describe('Environment Variable Startup Validation', () => {
       expect((err as ValidationError).message).toContain('GOOGLE_CLIENT_SECRET');
       expect((err as ValidationError).message).toContain('placeholder');
     }
+  });
+
+  test('fails when CRON_SECRET is shorter than 16 characters', () => {
+    const invalidCronEnv = {
+      ...baseValidEnv,
+      CRON_SECRET: 'short-secret',
+    };
+    expect(() => loadEnv(invalidCronEnv)).toThrow(ValidationError);
   });
 
   test('allows test placeholders in test mode (NODE_ENV=test)', () => {

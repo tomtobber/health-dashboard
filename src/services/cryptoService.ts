@@ -1,4 +1,4 @@
-import crypto from 'crypto';
+﻿import crypto from 'crypto';
 import { z } from 'zod';
 import { env } from '../config/env';
 import { CryptographicError } from '../errors/AppError';
@@ -184,4 +184,16 @@ export function verifyState<T = Record<string, unknown>>(signedStateToken: strin
       err
     );
   }
+}
+
+export function safeTimingCompare(a: string, b: string): boolean {
+  if (typeof a !== 'string' || typeof b !== 'string' || !a || !b) {
+    return false;
+  }
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
 }
