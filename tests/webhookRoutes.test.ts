@@ -7,37 +7,39 @@ import { eq } from 'drizzle-orm';
 
 describe('Webhook Routes', () => {
   let testUserId: string;
+  const isNeonDb = Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL.includes('neon.tech'));
 
   beforeAll(async () => {
-    // Clean up if exists
-    await pool.query('DELETE FROM users WHERE email = $1', ['webhook_test@example.com']);
+    if (isNeonDb) {
+      // Clean up if exists
+      await pool.query('DELETE FROM users WHERE email = $1', ['webhook_test@example.com']);
 
-    const [user] = await db
-      .insert(users)
-      .values({
-        email: 'webhook_test@example.com',
-        passwordHash: 'webhook_hash_123',
-      })
-      .returning();
+      const [user] = await db
+        .insert(users)
+        .values({
+          email: 'webhook_test@example.com',
+          passwordHash: 'webhook_hash_123',
+        })
+        .returning();
 
-    testUserId = user.id;
+      testUserId = user.id;
 
-    await db.insert(connectedAccounts).values({
-      userId: testUserId,
-      provider: 'google_health',
-      accessToken: encryptToken('mock_access_token_webhook'),
-      refreshToken: encryptToken('mock_refresh_token_webhook'),
-      scopes: '[]',
-      status: 'active',
-    });
+      await db.insert(connectedAccounts).values({
+        userId: testUserId,
+        provider: 'google_health',
+        accessToken: encryptToken('mock_access_token_webhook'),
+        refreshToken: encryptToken('mock_refresh_token_webhook'),
+        scopes: '[]',
+        status: 'active',
+      });
+    } else {
+      testUserId = 'c0000000-0000-0000-0000-000000000003';
+    }
   });
 
   afterAll(async () => {
-    try {
-      if (testUserId) {
-        await db.delete(users).where(eq(users.id, testUserId));
-      }
-    } finally {
+    if (isNeonDb && testUserId) {
+      await db.delete(users).where(eq(users.id, testUserId)).catch(() => {});
       await pool.end().catch(() => {});
     }
   });

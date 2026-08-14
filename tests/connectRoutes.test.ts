@@ -12,29 +12,32 @@ import { eq } from 'drizzle-orm';
 describe('Connect Routes API (Google OAuth)', () => {
   let authToken: string;
   let testUserId: string;
+  const isNeonDb = Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL.includes('neon.tech'));
 
   beforeAll(async () => {
-    // Clean up if exists
-    await pool.query('DELETE FROM users WHERE email = $1', ['connect_test@example.com']);
+    if (isNeonDb) {
+      // Clean up if exists
+      await pool.query('DELETE FROM users WHERE email = $1', ['connect_test@example.com']);
 
-    const [user] = await db
-      .insert(users)
-      .values({
-        email: 'connect_test@example.com',
-        passwordHash: 'connect_hash_123',
-      })
-      .returning();
+      const [user] = await db
+        .insert(users)
+        .values({
+          email: 'connect_test@example.com',
+          passwordHash: 'connect_hash_123',
+        })
+        .returning();
 
-    testUserId = user.id;
-    authToken = jwt.sign({ id: testUserId, email: user.email }, env.JWT_SECRET, { expiresIn: '1h' });
+      testUserId = user.id;
+    } else {
+      testUserId = 'b0000000-0000-0000-0000-000000000002';
+    }
+
+    authToken = jwt.sign({ id: testUserId, email: 'connect_test@example.com' }, env.JWT_SECRET, { expiresIn: '1h' });
   });
 
   afterAll(async () => {
-    try {
-      if (testUserId) {
-        await db.delete(users).where(eq(users.id, testUserId));
-      }
-    } finally {
+    if (isNeonDb && testUserId) {
+      await db.delete(users).where(eq(users.id, testUserId)).catch(() => {});
       await pool.end().catch(() => {});
     }
   });
