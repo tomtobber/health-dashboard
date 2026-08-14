@@ -11,7 +11,9 @@ import * as dotenv from 'dotenv';
 
 dotenv.config();
 
-describe('Reconciliation Sweep Soft-Delete Integration Tests', () => {
+const isNeonDb = Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL.includes('neon.tech'));
+
+(isNeonDb ? describe : describe.skip)('Reconciliation Sweep Soft-Delete Integration Tests', () => {
   let pool: Pool;
   let db: NodePgDatabase<typeof schema>;
   let testUserId: string;

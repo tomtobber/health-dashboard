@@ -1,4 +1,4 @@
-name: CI
+﻿name: CI
 
 # Runs on every PR and every push to main. This is the merge-blocking gate —
 # pre-commit hooks alone are not enough since they can be bypassed with --no-verify.
@@ -12,6 +12,17 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  NODE_ENV: test
+  DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/health_dashboard' }}
+  JWT_SECRET: super-secret-jwt-key-min-32-chars-length
+  ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  CRON_SECRET: real-cron-secret-min-16-chars-long
+  GOOGLE_CLIENT_ID: mock-google-client-id
+  GOOGLE_CLIENT_SECRET: mock-google-client-secret
+  GOOGLE_REDIRECT_URI: http://localhost:3000/api/connect/google/callback
+  APP_BASE_URL: http://localhost:3000
+
 jobs:
   lint:
     name: Lint (ESLint)
@@ -22,9 +33,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
+        env:
+          NODE_ENV: test
       - run: npm ci
       - run: npm run lint
-        # Expects a package.json script: "lint": "eslint . --max-warnings=0"
 
   typecheck:
     name: Type Check (tsc)
@@ -35,9 +47,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
+        env:
+          NODE_ENV: test
       - run: npm ci
       - run: npm run typecheck
-        # Expects a package.json script: "typecheck": "tsc --noEmit"
 
   test:
     name: Tests
@@ -50,7 +63,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test -- --ci --coverage
-        # Expects a package.json script: "test": "vitest run" (or jest equivalent)
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4

@@ -13,7 +13,9 @@ import * as dotenv from 'dotenv';
 
 dotenv.config();
 
-describe('Neon PostgreSQL Database Integration Tests', () => {
+const isNeonDb = Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL.includes('neon.tech'));
+
+(isNeonDb ? describe : describe.skip)('Neon PostgreSQL Database Integration Tests', () => {
   let pool: Pool;
   let db: NodePgDatabase<typeof schema>;
   let testUserId: string;

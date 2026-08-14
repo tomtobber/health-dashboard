@@ -47,7 +47,25 @@ export const envSchema = z
 export type Env = z.infer<typeof envSchema>;
 
 export function loadEnv(envObj: Record<string, unknown> = process.env): Env {
-  const result = envSchema.safeParse(envObj);
+  // If explicitly in test mode (NODE_ENV=test), supply safe test defaults for missing vars
+  const isTest = envObj.NODE_ENV === 'test' || (envObj.NODE_ENV === undefined && process.env.NODE_ENV === 'test');
+  const targetEnv = isTest
+    ? {
+        PORT: '3000',
+        DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/health_dashboard',
+        JWT_SECRET: 'super-secret-jwt-key-min-32-chars-length',
+        ENCRYPTION_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        CRON_SECRET: 'real-cron-secret-min-16-chars-long',
+        GOOGLE_CLIENT_ID: 'mock-google-client-id',
+        GOOGLE_CLIENT_SECRET: 'mock-google-client-secret',
+        GOOGLE_REDIRECT_URI: 'http://localhost:3000/api/connect/google/callback',
+        APP_BASE_URL: 'http://localhost:3000',
+        NODE_ENV: 'test',
+        ...envObj,
+      }
+    : envObj;
+
+  const result = envSchema.safeParse(targetEnv);
   if (!result.success) {
     const errorDetails = result.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ');
     throw new ValidationError(`Environment variable validation failed: ${errorDetails}`, {
