@@ -8,7 +8,7 @@ import { inArray } from 'drizzle-orm';
 import { resolveLocalUserId } from '../src/routes/webhookRoutes';
 import { NotFoundError } from '../src/errors/AppError';
 
-describe('Webhook Routes & Exact Attribution', () => {
+describe('Webhook Routes & Exact Attribution (Official Google Health API Spec)', () => {
   let userAId: string;
   let userBId: string;
 
@@ -68,40 +68,62 @@ describe('Webhook Routes & Exact Attribution', () => {
     }
   });
 
-  test('GET /api/webhooks/google responds to verification challenge parameter', async () => {
+  test('POST verification probe with valid Authorization header responds 204 No Content', async () => {
     const res = await request(app)
-      .get('/api/webhooks/google?hub.challenge=test_challenge_code_123');
+      .post('/api/webhooks/google')
+      .set('Authorization', `Bearer ${env.WEBHOOK_AUTH_TOKEN}`)
+      .send({
+        type: 'verification',
+      });
 
-    expect(res.status).toBe(200);
-    expect(res.text).toBe('test_challenge_code_123');
+    expect(res.status).toBe(204);
   });
 
-  test('POST /api/webhooks/google fails with 401 when Authorization header is missing', async () => {
+  test('POST verification probe WITHOUT Authorization header fails with 401 Unauthorized', async () => {
     const res = await request(app)
       .post('/api/webhooks/google')
       .send({
-        healthUserId: 'google_health_user_A_1001',
-        metricType: 'steps',
+        type: 'verification',
       });
 
     expect(res.status).toBe(401);
     expect(res.body).toHaveProperty('code', 'AUTHENTICATION_ERROR');
   });
 
-  test('POST /api/webhooks/google fails with 401 when Authorization header token is invalid', async () => {
+  test('POST notification fails with 401 when Authorization header is missing', async () => {
     const res = await request(app)
       .post('/api/webhooks/google')
-      .set('Authorization', 'Bearer invalid_wrong_token')
       .send({
-        healthUserId: 'google_health_user_A_1001',
-        metricType: 'steps',
+        data: [
+          {
+            healthUserId: 'google_health_user_A_1001',
+            dataType: 'steps',
+          },
+        ],
       });
 
     expect(res.status).toBe(401);
     expect(res.body).toHaveProperty('code', 'AUTHENTICATION_ERROR');
   });
 
-  test('TWO ACTIVE ACCOUNTS: Webhook for user A is strictly attributed to User A and NEVER to User B', async () => {
+  test('POST notification fails with 401 when Authorization token is invalid', async () => {
+    const res = await request(app)
+      .post('/api/webhooks/google')
+      .set('Authorization', 'Bearer invalid_token_123')
+      .send({
+        data: [
+          {
+            healthUserId: 'google_health_user_A_1001',
+            dataType: 'steps',
+          },
+        ],
+      });
+
+    expect(res.status).toBe(401);
+    expect(res.body).toHaveProperty('code', 'AUTHENTICATION_ERROR');
+  });
+
+  test('TWO ACTIVE ACCOUNTS: Notification for User A in nested data array responds 204 and resolves strictly to User A', async () => {
     const resolved = await resolveLocalUserId(undefined, 'google_health_user_A_1001');
     expect(resolved).toBe(userAId);
     expect(resolved).not.toBe(userBId);
@@ -110,19 +132,27 @@ describe('Webhook Routes & Exact Attribution', () => {
       .post('/api/webhooks/google')
       .set('Authorization', `Bearer ${env.WEBHOOK_AUTH_TOKEN}`)
       .send({
-        healthUserId: 'google_health_user_A_1001',
-        dataType: 'steps',
-        startTime: '2026-08-15T00:00:00Z',
-        endTime: '2026-08-15T01:00:00Z',
-        operation: 'UPSERT',
+        data: [
+          {
+            healthUserId: 'google_health_user_A_1001',
+            dataType: 'steps',
+            operation: 'UPSERT',
+            intervals: [
+              {
+                physicalTimeInterval: {
+                  startTime: '2026-08-15T00:00:00Z',
+                  endTime: '2026-08-15T01:00:00Z',
+                },
+              },
+            ],
+          },
+        ],
       });
 
-    expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty('status', 'accepted');
-    expect(res.body).toHaveProperty('userId', userAId);
+    expect(res.status).toBe(204);
   });
 
-  test('TWO ACTIVE ACCOUNTS: Webhook for user B is strictly attributed to User B and NEVER to User A', async () => {
+  test('TWO ACTIVE ACCOUNTS: Notification for User B responds 204 and resolves strictly to User B', async () => {
     const resolved = await resolveLocalUserId(undefined, 'google_health_user_B_2002');
     expect(resolved).toBe(userBId);
     expect(resolved).not.toBe(userAId);
@@ -131,27 +161,39 @@ describe('Webhook Routes & Exact Attribution', () => {
       .post('/api/webhooks/google')
       .set('Authorization', `Bearer ${env.WEBHOOK_AUTH_TOKEN}`)
       .send({
-        healthUserId: 'google_health_user_B_2002',
-        dataType: 'heart_rate',
-        startTime: '2026-08-15T00:00:00Z',
-        endTime: '2026-08-15T01:00:00Z',
-        operation: 'UPSERT',
+        data: [
+          {
+            healthUserId: 'google_health_user_B_2002',
+            dataType: 'heartRate',
+            operation: 'UPSERT',
+            intervals: [
+              {
+                physicalTimeInterval: {
+                  startTime: '2026-08-15T00:00:00Z',
+                  endTime: '2026-08-15T01:00:00Z',
+                },
+              },
+            ],
+          },
+        ],
       });
 
-    expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty('status', 'accepted');
-    expect(res.body).toHaveProperty('userId', userBId);
+    expect(res.status).toBe(204);
   });
 
-  test('TWO ACTIVE ACCOUNTS: Webhook with UNKNOWN healthUserId is DISCARDED (fails with 404 NotFoundError) and never attributed to any user', async () => {
+  test('TWO ACTIVE ACCOUNTS: Notification with UNKNOWN healthUserId is DISCARDED (fails with 404 NotFoundError)', async () => {
     await expect(resolveLocalUserId(undefined, 'unknown_unregistered_google_id_9999')).rejects.toThrow(NotFoundError);
 
     const res = await request(app)
       .post('/api/webhooks/google')
       .set('Authorization', `Bearer ${env.WEBHOOK_AUTH_TOKEN}`)
       .send({
-        healthUserId: 'unknown_unregistered_google_id_9999',
-        dataType: 'steps',
+        data: [
+          {
+            healthUserId: 'unknown_unregistered_google_id_9999',
+            dataType: 'steps',
+          },
+        ],
       });
 
     expect(res.status).toBe(404);
@@ -159,26 +201,20 @@ describe('Webhook Routes & Exact Attribution', () => {
     expect(res.body.error).toContain('Unattributable webhook notification');
   });
 
-  test('GUARD CHECK: resolveLocalUserId throws NotFoundError immediately when both healthUserId and payloadUserId are absent', async () => {
-    // Both undefined
+  test('GUARD CHECK: resolveLocalUserId throws NotFoundError immediately when healthUserId is absent/whitespace', async () => {
     await expect(resolveLocalUserId(undefined, undefined)).rejects.toThrow(NotFoundError);
-    await expect(resolveLocalUserId(undefined, undefined)).rejects.toThrow(/missing both healthUserId and payloadUserId/i);
-
-    // Both empty strings / whitespace
     await expect(resolveLocalUserId('   ', '')).rejects.toThrow(NotFoundError);
   });
 
-  test('POST /api/webhooks/google returns 400 Bad Request when both healthUserId and payloadUserId are absent from payload', async () => {
+  test('POST /api/webhooks/google returns 400 Bad Request on invalid payload structure', async () => {
     const res = await request(app)
       .post('/api/webhooks/google')
       .set('Authorization', `Bearer ${env.WEBHOOK_AUTH_TOKEN}`)
       .send({
-        dataType: 'steps',
-        startTime: '2026-08-15T00:00:00Z',
+        data: [],
       });
 
     expect(res.status).toBe(400);
     expect(res.body).toHaveProperty('code', 'VALIDATION_ERROR');
-    expect(JSON.stringify(res.body)).toContain('Either healthUserId or userId must be provided');
   });
 });

@@ -307,12 +307,22 @@ separate task from ongoing sync, not a variant of it:
 - Failed webhook deliveries retry for up to 7 days before being dropped;
   the reconciliation job is the safety net beyond that window (see
   Architecture Principles for which data types this actually applies to).
-- Webhook subscriber endpoints must be public HTTPS (TLS 1.2+) —
-  Google performs a verification challenge against the endpoint at
-  subscription time. See "Deployment & Staging Environment" for the
-  resolved hosting decision. This requirement applies to the backend
-  regardless of frontend choice (web page vs. native app) — that's a
-  separate, independent decision deferred to Phase 5.
+- Webhook subscriber endpoints must be public HTTPS (TLS 1.2+).
+  Official Google Health Webhooks Specification Details:
+  - **Subscriber Creation**: Configured via `POST /v4/projects/{project_number}/subscribers?subscriberId={subscriberId}`
+    where `{project_number}` is the numeric Google Cloud project number.
+    Payload specifies `endpointUri`, `endpointAuthorization: { secret: "Bearer <WEBHOOK_AUTH_TOKEN>" }`,
+    and `subscriberConfigs: [ { dataTypes: [...28 types], subscriptionCreatePolicy: "AUTOMATIC" } ]`.
+  - **Verification Probes**: Google verifies the endpoint at subscription creation time by sending two `POST`
+    requests with `{"type":"verification"}` (one with Bearer Authorization expecting 200/204, one without expecting 401).
+  - **Notification Format**: Notifications arrive via `POST` with payloads nested under `data` containing
+    `healthUserId`, `dataType`, `operation`, and `intervals[].physicalTimeInterval.{startTime,endTime}`.
+  - **Response Contract**: Webhook route responds immediately with `204 No Content`, enqueuing sync execution asynchronously.
+  - **User Attribution**: Local user mapping is resolved strictly against `connected_accounts.health_user_id`,
+    populated via Google's documented `users.getIdentity` endpoint (or `id_token.sub` fallback).
+  - **Known Hardening Gap (Follow-up)**: In addition to the Bearer shared secret, Google Health API provides
+    ECDSA P-256 cryptographic signatures via `GOOGLE-HEALTH-API-SIGNATURE` (Tink-compatible). Flagged as a future
+    security hardening item.
 
 ## Deployment & Staging Environment
 

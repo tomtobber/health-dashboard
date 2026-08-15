@@ -2,35 +2,49 @@
 import { z } from 'zod';
 import { asyncHandler } from '../utils/asyncHandler';
 import { executeSync } from '../services/syncService';
-import { logger } from '../utils/logger';
-import { AuthenticationError, ValidationError, NotFoundError } from '../errors/AppError';
-import { safeTimingCompare } from '../services/cryptoService';
 import { env } from '../config/env';
-import { db as defaultDb } from '../db';
+import { safeTimingCompare } from '../services/cryptoService';
+import { AuthenticationError, ValidationError, NotFoundError } from '../errors/AppError';
+import { logger } from '../utils/logger';
+import { db } from '../db';
 import { connectedAccounts } from '../db/schema';
-import { eq, and, or } from 'drizzle-orm';
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import type * as schema from '../db/schema';
+import { eq, and } from 'drizzle-orm';
 
 export const webhookRouter = Router();
 
-const webhookPayloadSchema = z.object({
-  healthUserId: z.string().optional(),
-  userId: z.string().optional(),
-  dataType: z.string().optional(),
-  metricType: z.string().optional(),
-  startDate: z.string().optional(),
-  endDate: z.string().optional(),
+const physicalTimeIntervalSchema = z.object({
   startTime: z.string().optional(),
   endTime: z.string().optional(),
-  operation: z.string().optional(),
-  clientProvidedSubscriptionName: z.string().optional(),
-}).refine(data => Boolean(data.healthUserId?.trim() || data.userId?.trim()), {
-  message: 'Either healthUserId or userId must be provided in webhook notification payload',
-}).refine(data => Boolean(data.dataType?.trim() || data.metricType?.trim()), {
-  message: 'Either dataType or metricType must be provided in webhook notification payload',
 });
 
+const intervalSchema = z.object({
+  physicalTimeInterval: physicalTimeIntervalSchema.optional(),
+});
+
+export const singleNotificationItemSchema = z.object({
+  healthUserId: z.string({ required_error: 'healthUserId is required in notification data' }).min(1),
+  dataType: z.string({ required_error: 'dataType is required in notification data' }).min(1),
+  operation: z.string().optional(),
+  intervals: z.array(intervalSchema).optional(),
+});
+
+export type NotificationItem = z.infer<typeof singleNotificationItemSchema>;
+
+export const webhookPayloadSchema = z.union([
+  z.object({
+    type: z.literal('verification'),
+  }),
+  z.object({
+    data: z.union([
+      z.array(singleNotificationItemSchema).min(1),
+      singleNotificationItemSchema,
+    ]),
+  }),
+]);
+
+/**
+ * Authenticates incoming Google Health webhook requests via Bearer token.
+ */
 function authenticateWebhookRequest(req: Request): void {
   const authHeader = req.headers.authorization;
   if (!authHeader) {
@@ -40,10 +54,16 @@ function authenticateWebhookRequest(req: Request): void {
     });
   }
 
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
-  const expectedSecret = env.WEBHOOK_AUTH_TOKEN;
+  const parts = authHeader.split(' ');
+  if (parts.length !== 2 || parts[0].toLowerCase() !== 'bearer') {
+    throw new AuthenticationError('Unauthorized: Invalid authorization format. Expected Bearer token', {
+      operation: 'authenticateWebhookRequest',
+      path: req.path,
+    });
+  }
 
-  if (!safeTimingCompare(token, expectedSecret)) {
+  const token = parts[1].trim();
+  if (!safeTimingCompare(token, env.WEBHOOK_AUTH_TOKEN)) {
     throw new AuthenticationError('Unauthorized: Invalid webhook authorization token', {
       operation: 'authenticateWebhookRequest',
       path: req.path,
@@ -52,42 +72,34 @@ function authenticateWebhookRequest(req: Request): void {
 }
 
 /**
- * Resolves the exact local user_id from Google Health webhook payload.
- * Strictly queries connected_accounts matching healthUserId or userId.
- * NEVER guesses or falls back to an arbitrary active account.
- * Runs identically in all environments without branching on DATABASE_URL.
+ * Resolves local user ID via strict exact-matching on healthUserId or payloadUserId.
+ * Throws NotFoundError immediately if not found (zero guessing or arbitrary fallback).
  */
 export async function resolveLocalUserId(
   payloadUserId?: string,
-  healthUserId?: string,
-  dbInstance: NodePgDatabase<typeof schema> = defaultDb
+  healthUserId?: string
 ): Promise<string> {
-  const trimmedHealthId = healthUserId?.trim();
-  const trimmedPayloadId = payloadUserId?.trim();
+  const sanitizedHealthUserId = typeof healthUserId === 'string' ? healthUserId.trim() : '';
+  const sanitizedPayloadUserId = typeof payloadUserId === 'string' ? payloadUserId.trim() : '';
 
-  // 1. Mandatory Guard: If neither identifier is present, reject immediately before DB query
-  if (!trimmedHealthId && !trimmedPayloadId) {
-    logger.warn('Unattributable webhook notification discarded: missing both healthUserId and payloadUserId', {
+  if (!sanitizedHealthUserId && !sanitizedPayloadUserId) {
+    logger.error('Webhook notification missing both healthUserId and payloadUserId — cannot attribute', {
+      operation: 'resolveLocalUserId',
+      sanitizedHealthUserId,
+      sanitizedPayloadUserId,
+    });
+    throw new NotFoundError('Unattributable webhook: missing both healthUserId and payloadUserId', {
       operation: 'resolveLocalUserId',
     });
-    throw new NotFoundError('Unattributable webhook notification: missing both healthUserId and payloadUserId', {
-      operation: 'resolveLocalUserId',
-    });
   }
 
-  // 2. Build exact lookup conditions
-  const conditions = [];
-  if (trimmedHealthId) {
-    conditions.push(eq(connectedAccounts.healthUserId, trimmedHealthId));
-  }
-  if (trimmedPayloadId) {
-    conditions.push(eq(connectedAccounts.userId, trimmedPayloadId));
-  }
+  const queryCondition = sanitizedHealthUserId
+    ? eq(connectedAccounts.healthUserId, sanitizedHealthUserId)
+    : eq(connectedAccounts.userId, sanitizedPayloadUserId);
 
-  const [account] = await dbInstance
+  const matchedAccounts = await db
     .select({
       userId: connectedAccounts.userId,
-      status: connectedAccounts.status,
       healthUserId: connectedAccounts.healthUserId,
     })
     .from(connectedAccounts)
@@ -95,102 +107,104 @@ export async function resolveLocalUserId(
       and(
         eq(connectedAccounts.status, 'active'),
         eq(connectedAccounts.provider, 'google_health'),
-        or(...conditions)
+        queryCondition
       )
     )
     .limit(1);
 
-  if (!account) {
-    logger.warn('Unattributable webhook notification discarded: no active connected account matches healthUserId or userId', {
+  if (!matchedAccounts || matchedAccounts.length === 0) {
+    logger.warn('Unattributable webhook notification discarded: no active connected account matches identifier', {
       operation: 'resolveLocalUserId',
-      healthUserId: trimmedHealthId,
-      payloadUserId: trimmedPayloadId,
+      sanitizedHealthUserId,
+      sanitizedPayloadUserId,
     });
-    throw new NotFoundError('Unattributable webhook notification: no matching active connected account found', {
+    throw new NotFoundError('Unattributable webhook notification: no matching active account found', {
       operation: 'resolveLocalUserId',
-      healthUserId: trimmedHealthId,
-      payloadUserId: trimmedPayloadId,
+      sanitizedHealthUserId,
+      sanitizedPayloadUserId,
     });
   }
 
-  return account.userId;
+  return matchedAccounts[0].userId;
 }
 
-// 1. Google Webhook Challenge Verification (GET)
-webhookRouter.get('/google', (req: Request, res: Response) => {
-  const challenge = req.query['hub.challenge'] || req.query.challenge;
-  if (challenge) {
-    logger.info('Google Health webhook verification challenge received', {
-      operation: 'googleWebhookChallenge',
-    });
-    return res.status(200).send(String(challenge));
-  }
-  return res.status(200).json({ status: 'ok', message: 'Google Health webhook endpoint active' });
-});
-
-// 2. Google Webhook Notification Handler (POST)
+/**
+ * POST /api/webhooks/google
+ * 
+ * Handles:
+ * 1. Subscription verification probes ({"type":"verification"})
+ * 2. Real Google Health API webhook notifications ({"data": [...]})
+ * 
+ * Responds with HTTP 204 No Content immediately, executing synchronization asynchronously.
+ */
 webhookRouter.post(
   '/google',
   asyncHandler(async (req: Request, res: Response): Promise<unknown> => {
-    // Authenticate authorization_token configured during subscriber creation
+    // 1. Authenticate the request header
     authenticateWebhookRequest(req);
 
+    // 2. Validate payload structure with Zod
     const parseResult = webhookPayloadSchema.safeParse(req.body);
     if (!parseResult.success) {
-      throw new ValidationError('Invalid Google webhook payload', {
+      throw new ValidationError('Invalid webhook payload format', {
         operation: 'googleWebhookHandler',
         zodErrors: parseResult.error.errors,
       });
     }
 
-    const { userId: payloadUserId, healthUserId, metricType: pMetric, dataType: pData, startDate, endDate, startTime, endTime } = parseResult.data;
-    const resolvedMetricType = pMetric || pData || 'heart_rate';
-    const rawStart = startDate || startTime;
-    const rawEnd = endDate || endTime;
+    const payload = parseResult.data;
 
-    const now = new Date();
-    const syncStart = rawStart ? new Date(rawStart) : new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const syncEnd = rawEnd ? new Date(rawEnd) : now;
+    // 3. Handle verification probe from Google Health API
+    if ('type' in payload) {
+      logger.info('Google Health webhook subscription verification probe received and authorized', {
+        operation: 'googleWebhookVerificationProbe',
+      });
+      return res.status(204).end();
+    }
 
-    // Strict exact attribution (throws NotFoundError if unmatched; discarded)
-    const localUserId = await resolveLocalUserId(payloadUserId, healthUserId);
+    // 4. Handle real notification data payload
+    const notificationData = payload.data;
+    const items: NotificationItem[] = Array.isArray(notificationData) ? notificationData : [notificationData];
 
-    logger.info('Received and authenticated Google Health webhook notification', {
-      operation: 'googleWebhookHandler',
-      localUserId,
-      healthUserId,
-      metricType: resolvedMetricType,
-      window: { start: syncStart.toISOString(), end: syncEnd.toISOString() },
-    });
+    for (const item of items) {
+      // Resolve target user strictly
+      const localUserId = await resolveLocalUserId(undefined, item.healthUserId);
 
-    // Execute sync asynchronously without blocking webhook HTTP acknowledgment
-    setImmediate(() => {
-      void (async () => {
-        try {
-          await executeSync({
+      // Extract physical time intervals if present
+      const firstInterval = item.intervals?.[0]?.physicalTimeInterval;
+      const now = new Date();
+      const startDate = firstInterval?.startTime ? new Date(firstInterval.startTime) : new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const endDate = firstInterval?.endTime ? new Date(firstInterval.endTime) : now;
+
+      logger.info('Received and authenticated Google Health webhook notification', {
+        operation: 'googleWebhookHandler',
+        localUserId,
+        healthUserId: item.healthUserId,
+        dataType: item.dataType,
+        operationType: item.operation,
+        window: { start: startDate.toISOString(), end: endDate.toISOString() },
+      });
+
+      // Execute sync asynchronously (do not block 204 webhook response)
+      setImmediate(() => {
+        void executeSync({
+          userId: localUserId,
+          startDate,
+          endDate,
+          metricTypes: [item.dataType.toLowerCase()],
+          trigger: 'webhook',
+        }).catch((err: unknown) => {
+          logger.error('Asynchronous webhook sync execution failed', {
+            operation: 'executeSync:webhook:async',
             userId: localUserId,
-            provider: 'google_health',
-            startDate: syncStart,
-            endDate: syncEnd,
-            metricTypes: [resolvedMetricType],
-            trigger: 'webhook',
+            healthUserId: item.healthUserId,
+            error: err instanceof Error ? err.message : String(err),
           });
-        } catch (syncErr: unknown) {
-          logger.error('Webhook-triggered sync execution failed in background', {
-            operation: 'googleWebhookHandler:backgroundSync',
-            userId: localUserId,
-            metricType: resolvedMetricType,
-            error: syncErr instanceof Error ? syncErr.message : String(syncErr),
-          });
-        }
-      })();
-    });
+        });
+      });
+    }
 
-    return res.status(200).json({
-      status: 'accepted',
-      message: 'Google Health webhook notification accepted for asynchronous processing',
-      metricType: resolvedMetricType,
-      userId: localUserId,
-    });
+    // 5. Google Health Webhooks spec requires immediate 204 No Content
+    return res.status(204).end();
   })
 );

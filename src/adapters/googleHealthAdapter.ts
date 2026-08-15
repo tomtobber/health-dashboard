@@ -119,6 +119,43 @@ export class GoogleHealthAdapter implements ProviderAdapter {
     return 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
   }
 
+  /**
+   * Queries the official Google Health API users.getIdentity endpoint to retrieve healthUserId.
+   */
+  public static async fetchUserIdentity(accessToken: string): Promise<string | undefined> {
+    try {
+      const response = await fetchWithTimeout('https://health.googleapis.com/v4/users/me:getIdentity', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${accessToken}` },
+        serviceName: 'GoogleHealthGetIdentity',
+        timeoutMs: 5000,
+        retries: 1,
+      });
+
+      if (response.ok) {
+        const body: unknown = await response.json();
+        if (typeof body === 'object' && body !== null) {
+          const b = body as Record<string, unknown>;
+          if (typeof b.healthUserId === 'string' && b.healthUserId.trim()) {
+            return b.healthUserId.trim();
+          }
+          if (typeof b.id === 'string' && b.id.trim()) {
+            return b.id.trim();
+          }
+          if (typeof b.name === 'string' && b.name.trim()) {
+            return b.name.replace(/^users\//, '').trim();
+          }
+        }
+      }
+    } catch (err: unknown) {
+      logger.warn('Failed to query users.getIdentity endpoint from Google Health API', {
+        operation: 'fetchUserIdentity',
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return undefined;
+  }
+
   public async authenticate(code: string, redirectUri?: string): Promise<OAuthTokens> {
     if (env.NODE_ENV === 'test' || this.clientId.includes('mock') || this.clientId.includes('test')) {
       return {
@@ -165,7 +202,13 @@ export class GoogleHealthAdapter implements ProviderAdapter {
     const data = parseResult.data;
     let healthUserId: string | undefined;
 
-    if (data.id_token) {
+    // 1. Preferred documented source: users.getIdentity endpoint
+    if (data.access_token) {
+      healthUserId = await GoogleHealthAdapter.fetchUserIdentity(data.access_token);
+    }
+
+    // 2. Fallback: decode sub claim from id_token
+    if (!healthUserId && data.id_token) {
       try {
         const decoded = jwt.decode(data.id_token) as { sub?: string };
         if (decoded && typeof decoded.sub === 'string') {
@@ -179,7 +222,7 @@ export class GoogleHealthAdapter implements ProviderAdapter {
       }
     }
 
-    // Fallback: If id_token sub is missing, fetch userinfo from Google
+    // 3. Fallback: userinfo OAuth2 endpoint
     if (!healthUserId && data.access_token) {
       try {
         const userinfoRes = await fetchWithTimeout('https://www.googleapis.com/oauth2/v3/userinfo', {
@@ -270,7 +313,9 @@ export class GoogleHealthAdapter implements ProviderAdapter {
 
   /**
    * Project-level helper: Creates or updates the single Google Cloud Project subscriber.
-   * Configures subscriptionCreatePolicy: AUTOMATIC so all consenting users route dynamically.
+   * Uses Google Health API subscriber format:
+   * - endpointAuthorization.secret: "Bearer <token>"
+   * - subscriberConfigs: single element array with dataTypes and subscriptionCreatePolicy: "AUTOMATIC"
    */
   public static async createOrUpdateProjectSubscriber(options: {
     projectId: string;
@@ -289,21 +334,23 @@ export class GoogleHealthAdapter implements ProviderAdapter {
       };
     }
 
-    const subscriberConfigs = WEBHOOK_SUPPORTED_METRICS.map((dataType) => ({
-      dataType,
-      subscriptionCreatePolicy: 'AUTOMATIC',
-    }));
+    const authSecretHeader = webhookAuthToken.startsWith('Bearer ') ? webhookAuthToken : `Bearer ${webhookAuthToken}`;
 
     const subscriberPayload = {
       endpointUri: webhookUrl,
       endpointAuthorization: {
-        authorizationToken: webhookAuthToken,
+        secret: authSecretHeader,
       },
-      subscriberConfigs,
+      subscriberConfigs: [
+        {
+          dataTypes: WEBHOOK_SUPPORTED_METRICS,
+          subscriptionCreatePolicy: 'AUTOMATIC',
+        },
+      ],
     };
 
     try {
-      // 1. Try to create new subscriber under project
+      // 1. Try to create new subscriber under project (project can be project_number or project_id)
       const createUrl = `https://health.googleapis.com/v4/projects/${projectId}/subscribers?subscriberId=${subscriberId}`;
       const createResponse = await fetchWithTimeout(createUrl, {
         method: 'POST',
