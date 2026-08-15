@@ -45,6 +45,7 @@ invariants that enforce this.
 ## Data Model
 
 ### `connected_accounts`
+
 Generic across providers from day one, even though only Google Health
 exists in phase 1.
 
@@ -52,12 +53,14 @@ exists in phase 1.
 |---|---|
 | user_id | FK to `users.id`, `ON DELETE CASCADE` |
 | provider | e.g. `google_health`, future: other integrations |
+| health_user_id | provider's own user identifier (e.g. the Google `sub` claim from the OAuth id_token) — required for exact-match webhook attribution; see "Webhook subscriber model" below |
 | access_token / refresh_token | encrypted at rest |
 | scopes | |
 | status | active / disabled / needs_reauth |
 
 ### `metric_entries`
-One normalized table for **all** data, regardless of source — synced,
+
+One normalized table for all data, regardless of source — synced,
 manual, or from future integrations.
 
 | column | notes |
@@ -72,6 +75,7 @@ manual, or from future integrations.
 | value_text | category label (for `metric_definitions.value_type = category`) |
 | unit | |
 | source_stream | `raw` \| `reconciled` (Google Health exposes both) |
+| aggregation | `raw`, `1m_avg`, `5m_avg`, `daily_avg`, ... |
 | raw_payload | jsonb, original provider response |
 | updated_at | |
 | deleted_at | nullable; soft delete, see below |
@@ -81,10 +85,10 @@ insert-then-check. Raw and reconciled streams are keyed differently —
 they are not guaranteed to share a stable ID (the reconcile endpoint
 merges multiple sources and identifies points via `dataPointName`, not
 the raw `name`/point-ID field our `external_id` is based on):
-- **Raw stream, with a native point ID**: unique on
+- Raw stream, with a native point ID: unique on
   `(user_id, provider, metric_type, external_id)`.
-- **Reconciled stream, or any interval/rollup type without a stable
-  point ID** (e.g. steps): unique on
+- Reconciled stream, or any interval/rollup type without a stable
+  point ID (e.g. steps): unique on
   `(user_id, provider, metric_type, source_stream, start_time, end_time)`.
 - `reconciled` stream values take priority over `raw` stream values on
   conflict.
@@ -107,6 +111,7 @@ UX is ever wanted, that's an application-layer flag
 a reason to avoid CASCADE at the database level.
 
 ### `metric_definitions` (phase 3+)
+
 User-defined custom metric types (name, unit, value type: numeric /
 duration / boolean / category), referenced by `metric_entries.metric_type`
 for that user. `value_type` determines whether a given entry's data lives
@@ -122,7 +127,7 @@ resolution indefinitely is not the default assumption for this project;
 most data types (daily VO2 max, sleep sessions, weight, etc.) are
 naturally low-frequency and are unaffected by this section.
 
-- **Downsample high-frequency types at ingestion**, before writing to
+- Downsample high-frequency types at ingestion, before writing to
   `metric_entries` — e.g. aggregate to 1-minute or 5-minute
   min/max/avg rather than storing every raw sample. This keeps the
   normalized store performant for charts and correlation analysis
@@ -142,39 +147,89 @@ naturally low-frequency and are unaffected by this section.
 Sync completeness and cross-stream duplication are not assumed —
 both are checked deliberately rather than trusted implicitly.
 
-**Sync auditability** — every sync operation (webhook-triggered,
-reconciliation, or backfill) writes a row to a `sync_runs` table
-(user_id, provider, metric_type, trigger, requested_range, status,
-points_fetched, points_upserted, pages_fetched, error, started/completed
-timestamps). This is queryable state, not just application logs — it's
-what answers "when did we last successfully sync X for this user."
+- **Sync auditability** — every sync operation (webhook-triggered,
+  reconciliation, or backfill) writes a row to a `sync_runs` table
+  (user_id, provider, metric_type, trigger, requested_range, status,
+  points_fetched, points_upserted, pages_fetched, error, started/completed
+  timestamps). This is queryable state, not just application logs — it's
+  what answers "when did we last successfully sync X for this user."
+- **Subscription health** — Google auto-disables webhook subscriptions
+  for inactive subscribers. A scheduled job periodically confirms the
+  single project-level subscriber (see "Webhook subscriber model" below)
+  is still active and re-registers it if not; webhook coverage should
+  never silently degrade.
 
-**Subscription health** — Google auto-disables webhook subscriptions
-for inactive subscribers. A scheduled job periodically confirms each
-subscription is still active via the subscribers API and re-subscribes
-if not; webhook coverage should never silently degrade.
+## Webhook Subscriber Model (Google Health API)
 
-**Gap detection** — flag suspicious patterns from `sync_runs` /
-`metric_entries` (e.g. a zero-data day sandwiched between two
-normal-density days) as likely sync failures rather than treating all
-gaps as equally explainable (device off, etc.).
+Corrected after initial implementation wrongly assumed a per-user
+subscription lifecycle — verified against direct citations from
+`developers.google.com/health/webhooks`.
 
-**Cross-stream duplication is prevented structurally, not by
-convention.** Storage-level duplicates are already impossible (see
-uniqueness constraints above). Query-level double-counting — e.g.
-summing both raw and reconciled values for an overlapping window — is
-avoided by never querying `metric_entries` directly for
-charts/analysis/export. Instead, all reads go through one canonical
-query path that, per user/metric_type/time-window, prefers reconciled
-data and falls back to raw only where reconciled is absent. This
-removes the risk rather than relying on every future query remembering
-to filter by `source_stream`.
+- **Subscribers are scoped to the Google Cloud project**, not to
+  individual users. There is exactly one subscriber for this
+  app, registered once via `POST .../projects/{project}/subscribers`
+  with an explicit, self-chosen `subscriberId` (4-36 chars, must match
+  `[a-z]([a-z0-9-]{2,34}[a-z0-9])`) — not the literal string `"self"`,
+  which is not a documented value and silently 404s.
+- **`subscriptionCreatePolicy: AUTOMATIC` is used** — per Google's docs,
+  this means no per-user `Subscription` resource is created or managed.
+  Eligibility for notifications is computed dynamically from each
+  user's granted OAuth consent. Connecting a Google account does
+  not trigger any subscriber API call — it only stores tokens and
+  triggers backfill. Disconnecting does not delete or modify the
+  subscriber either — it only disables the local `connected_accounts`
+  row / revokes the OAuth token.
+- **The project-level subscriber is managed by a standalone script**
+  (`npm run setup:subscriber`), run manually — once initially, and
+  again only when `WEBHOOK_SUPPORTED_METRICS` changes. It must never
+  run automatically on app startup or on every Render deploy.
+- **`GOOGLE_PROJECT_ID` and `GOOGLE_SUBSCRIBER_ID` must not have
+  silent placeholder defaults** — missing values should fail startup
+  loudly, same as `GOOGLE_CLIENT_ID`.
+- **Webhook attribution** — this is the one piece treated as a hard
+  security/correctness invariant, not just an implementation detail:
+  Google's notification payload includes `healthUserId` (their identifier
+  for the user, not this app's local UUID) — matched against
+  `connected_accounts.health_user_id`, populated from the OAuth
+  `id_token`'s `sub` claim at connect time. Attribution must be an
+  exact match only:
+  - If neither `healthUserId` nor a local user identifier is present in
+    the payload, reject immediately (before any database query is
+    built) — never let an empty match condition silently fall through to
+    a broader query.
+  - If no active connected account matches, discard the notification
+    (log + reject) — never fall back to "the first/any active
+    account." A silent fallback here means one user's real health data
+    can get written to another user's records. This exact bug shipped
+    once already this project and was caught before production use —
+    treat any future change to this function as needing the same
+    scrutiny (an explicit test with 2+ simultaneously active accounts,
+    confirming cross-attribution is impossible).
+  - This logic must run identically in every environment — no
+    branching on `DATABASE_URL` contents, hostname, or `NODE_ENV` to
+    skip or alter the safety check. If tests need a mock, inject at the
+    database-client level, not by conditionally bypassing the check
+    itself.
 
-**Raw-vs-reconciled divergence check** — a periodic job compares raw and
-reconciled values for the same window and logs (not blocks) cases where
-they differ meaningfully. Useful signal on how much reconciliation is
-actually correcting, and would surface if the `external_id`/key
-assumptions above are behaving unexpectedly.
+- **Gap detection** — flag suspicious patterns from `sync_runs` /
+  `metric_entries` (e.g. a zero-data day sandwiched between two
+  normal-density days) as likely sync failures rather than treating all
+  gaps as equally explainable (device off, etc.).
+- **Cross-stream duplication is prevented structurally**, not by
+  convention. Storage-level duplicates are already impossible (see
+  uniqueness constraints above). Query-level double-counting — e.g.
+  summing both raw and reconciled values for an overlapping window — is
+  avoided by never querying `metric_entries` directly for
+  charts/analysis/export. Instead, all reads go through one canonical
+  query path that, per user/metric_type/time-window, prefers reconciled
+  data and falls back to raw only where reconciled is absent. This
+  removes the risk rather than relying on every future query remembering
+  to filter by `source_stream`.
+- **Raw-vs-reconciled divergence check** — a periodic job compares raw and
+  reconciled values for the same window and logs (not blocks) cases where
+  they differ meaningfully. Useful signal on how much reconciliation is
+  actually correcting, and would surface if the `external_id`/key
+  assumptions above are behaving unexpectedly.
 
 ## Architecture Principles (do not violate, regardless of phase)
 
@@ -185,10 +240,10 @@ assumptions above are behaving unexpectedly.
    implements the same adapter interface: `authenticate`, `sync`,
    `mapToNormalizedSchema`. Adding a new source should not require
    touching the storage or chart layers.
-3. Sync strategy is **per data type, not uniform**. As of the May 26,
+3. Sync strategy is per data type, not uniform. As of the May 26,
    2026 release, Google Health API webhooks cover a much wider set than
    originally documented here — confirmed via direct citation from
-   developers.google.com/health/webhooks: Active Zone Minutes, Activity
+   `developers.google.com/health/webhooks`: Active Zone Minutes, Activity
    Level, Altitude, Blood Glucose, Body Fat, Calories In Heart Rate Zone,
    Daily Heart Rate Variability, Daily Heart Rate Zones, Daily Oxygen
    Saturation, Daily Respiratory Rate, Daily Resting Heart Rate, Daily
@@ -198,8 +253,8 @@ assumptions above are behaving unexpectedly.
    Steps, Time In Heart Rate Zone, Total Calories, Weight. For those,
    webhooks trigger immediate syncs, with a scheduled reconciliation job
    as backup for missed/delayed deliveries and disabled subscriptions.
-   **Confirmed still polling-only** (no webhook support found): generic
-   `vo2Max`/`dailyVo2Max` (note: `runVo2Max` specifically *is*
+   Confirmed still polling-only (no webhook support found): generic
+   `vo2Max`/`dailyVo2Max` (note: `runVo2Max` specifically is
    webhook-supported — these are different types), `electrocardiogram`,
    `irregularRhythmNotification`, `coreBodyTemperature`, `bloodPressure`.
    This list has already changed materially once mid-project — re-verify
@@ -226,8 +281,8 @@ assumptions above are behaving unexpectedly.
 
 When a user first connects, pulling their available history is a
 separate task from ongoing sync, not a variant of it:
-- Triggered right after OAuth completes, but runs as an **async/queued
-  background job** — never synchronously in the OAuth callback. A
+- Triggered right after OAuth completes, but runs as an async/queued
+  background job — never synchronously in the OAuth callback. A
   months-long history at 5-second heart rate resolution can take
   significant time to paginate through.
 - The UI shows a syncing/in-progress state and displays data as it
@@ -240,9 +295,9 @@ separate task from ongoing sync, not a variant of it:
 - Google Health API scopes used here are Restricted — production use with
   real (non-test) users requires a Google privacy/security review. For
   personal/small-scale use, register accounts as OAuth test users instead.
-  **Use the literal scope URLs below — do not substitute the older Google
+- Use the literal scope URLs below — do not substitute the older Google
   Fit API scopes (`fitness.*`), which are a different API and can cause
-  token rejection if mixed with Google Health scopes on the same client:**
+  token rejection if mixed with Google Health scopes on the same client:
   - `https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly`
   - `https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly`
   - `https://www.googleapis.com/auth/googlehealth.sleep.readonly`
@@ -252,7 +307,7 @@ separate task from ongoing sync, not a variant of it:
 - Failed webhook deliveries retry for up to 7 days before being dropped;
   the reconciliation job is the safety net beyond that window (see
   Architecture Principles for which data types this actually applies to).
-- Webhook subscriber endpoints **must be public HTTPS (TLS 1.2+)** —
+- Webhook subscriber endpoints must be public HTTPS (TLS 1.2+) —
   Google performs a verification challenge against the endpoint at
   subscription time. See "Deployment & Staging Environment" for the
   resolved hosting decision. This requirement applies to the backend
@@ -267,9 +322,9 @@ against data that persists between sessions (Phase 1 used ephemeral,
 discard-on-exit Docker Postgres instances — not sufficient going
 forward).
 
-- **Backend hosting: Render**, region **Frankfurt** — matches the Neon
+- **Backend hosting**: Render, region Frankfurt — matches the Neon
   region above to keep backend-to-database latency low and data within
-  the EU. Deliberately *not* Google Cloud Run,
+  the EU. Deliberately not Google Cloud Run,
   despite already having a GCP project for OAuth — that project is an
   OAuth identity container, not compute infrastructure, so reusing it
   saves little. Render avoids GCP billing-account/IAM overhead, deploys
@@ -277,19 +332,19 @@ forward).
   against), and gives a public HTTPS endpoint with no separate tunnel
   needed once deployed. Cold-start behavior is also more predictable
   than Cloud Run's scale-to-zero default, which matters while validating
-  sync-timing logic. **Render is used for compute only — not its own
-  Postgres product**, which is a separate offering from the database
+  sync-timing logic. Render is used for compute only — not its own
+  Postgres product, which is a separate offering from the database
   decision below and has a hard 30-day free-tier expiration with
   permanent data deletion. `DATABASE_URL` points at Neon regardless of
   where the app is hosted.
-- **Database: Neon** (Postgres), region **AWS Europe (Frankfurt,
-  `aws-eu-central-1`)**. Chosen for two reasons: (1) latency — the
+- **Database**: Neon (Postgres), region AWS Europe (Frankfurt,
+  `aws-eu-central-1`). Chosen for two reasons: (1) latency — the
   pairing that matters is backend-server-to-database, not
   user-to-database, so this should match wherever Render is deployed;
   (2) data residency — this project stores real personal health data
   (GDPR special category), and the developer is EU-based, so keeping
   storage in the EU is a deliberate default, not just a performance
-  choice. **Region is permanent per Neon project** — cannot be changed
+  choice. Region is permanent per Neon project — cannot be changed
   without creating a new project and migrating data, so this isn't a
   "fix it later" setting. Free tier, zero GCP setup, standard
   Postgres — works identically with Drizzle regardless of host, and
@@ -302,8 +357,8 @@ forward).
   — expect this as a small, expected latency blip in `sync_runs` timing
   after quiet periods, not a bug.
 - **Test vs. live branch separation**: two Neon branches exist —
-  `DATABASE_URL` (in local `.env`) points at the **test branch**, used
-  by the app locally, the test suite, and CI. The **primary/live branch**
+  `DATABASE_URL` (in local `.env`) points at the test branch, used
+  by the app locally, the test suite, and CI. The primary/live branch
   connection string is not stored in `.env` or anywhere in the project
   at all right now — deliberately, so there's nothing for code or tests
   to accidentally reference. It gets added only when actually going
@@ -324,10 +379,15 @@ forward).
   app has. Revisit only if this ever grows into genuine multi-user
   signup beyond a handful of manually-added accounts.
 - **Secrets**: `ENCRYPTION_KEY`, `JWT_SECRET`, `GOOGLE_CLIENT_SECRET`,
-  and `DATABASE_URL` must be set via Render's environment/secrets
-  config, not committed or left as `.env.example` values — this stopped
-  being hypothetical once a real account's tokens were encrypted and
-  stored during Phase 1 manual testing.
+  `DATABASE_URL`, `CRON_SECRET`, and `WEBHOOK_AUTH_TOKEN` must be set via
+  Render's environment/secrets config, not committed or left as
+  `.env.example` values — this stopped being hypothetical once a real
+  account's tokens were encrypted and stored during Phase 1 manual
+  testing. `CRON_SECRET` and `WEBHOOK_AUTH_TOKEN` must be distinct
+  values — the latter is handed to and stored by Google (as the
+  webhook `authorization_token`), the former only authenticates our own
+  GitHub Actions cron; sharing one secret across both trust boundaries
+  was caught and fixed once already this project.
 - **Test-user expiry**: while the app remains in Google's "Testing"
   publishing status, authorizations from test users (including the
   developer's own account) expire after 7 days regardless of hosting —
@@ -353,11 +413,11 @@ forward).
 
 Remaining items — none block Phase 2 from starting, each is scoped to
 the phase it affects:
-- Exact job scheduling mechanism for the reconciliation poller and
-  backfill queue (cron, queue-based, etc.) — Phase 2.
-- Exact downsampling interval(s) per high-frequency data type, and how
-  long full-resolution `raw_payload` data is retained before pruning —
-  Phase 2.
-- Whether phase 4's adapter interface should be generalized now or
-  hardcoded for 1–2 known integrations first — Phase 4.
-- Frontend choice: web page vs. native app — Phase 5.
+1. Exact job scheduling mechanism for the reconciliation poller and
+   backfill queue (cron, queue-based, etc.) — Phase 2.
+2. Exact downsampling interval(s) per high-frequency data type, and how
+   long full-resolution `raw_payload` data is retained before pruning —
+   Phase 2.
+3. Whether phase 4's adapter interface should be generalized now or
+   hardcoded for 1–2 known integrations first — Phase 4.
+4. Frontend choice: web page vs. native app — Phase 5.
