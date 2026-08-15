@@ -56,6 +56,7 @@ describe('Connect Routes API (Google OAuth)', () => {
     expect(res.body.authUrl).toContain('https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgooglehealth.activity_and_fitness.readonly');
     expect(res.body.authUrl).toContain('https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgooglehealth.health_metrics_and_measurements.readonly');
     expect(res.body.authUrl).toContain('https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgooglehealth.sleep.readonly');
+    expect(res.body.authUrl).toContain('https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgooglehealth.profile.readonly');
   });
 
   test('GET /api/connect/google/callback fails with 400 Bad Request on invalid HMAC state', async () => {

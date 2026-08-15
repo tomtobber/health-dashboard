@@ -301,6 +301,7 @@ separate task from ongoing sync, not a variant of it:
   - `https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly`
   - `https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly`
   - `https://www.googleapis.com/auth/googlehealth.sleep.readonly`
+  - `https://www.googleapis.com/auth/googlehealth.profile.readonly`
 - Most data types support ~90 days per query; heart rate, active minutes,
   total calories, and calories-in-heart-rate-zone are capped at 14 days per
   request — batch requests accordingly.
