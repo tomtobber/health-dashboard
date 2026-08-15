@@ -14,8 +14,23 @@ const googleTokenResponseSchema = z.object({
 });
 
 export const METRICS_14_DAY = new Set(['heart_rate', 'active_minutes', 'total_calories', 'calories_in_zone', 'hrv', 'spo2']);
-export const WEBHOOK_SUPPORTED_METRICS = ['steps', 'altitude', 'distance', 'floors', 'weight', 'sleep'];
-export const POLLING_ONLY_METRICS = ['heart_rate', 'hrv', 'spo2', 'respiratory_rate', 'vo2_max', 'active_minutes', 'total_calories'];
+export const WEBHOOK_SUPPORTED_METRICS = [
+  'steps',
+  'altitude',
+  'distance',
+  'floors',
+  'weight',
+  'sleep',
+  'heart_rate',
+  'resting_heart_rate',
+  'hrv',
+  'active_minutes',
+  'total_calories',
+  'spo2',
+  'respiratory_rate',
+  'vo2_max',
+];
+export const POLLING_ONLY_METRICS = ['blood_glucose', 'blood_pressure', 'body_temperature'];
 
 export function splitDateRange(startDate: Date, endDate: Date, maxDays: number): { start: Date; end: Date }[] {
   const ranges: { start: Date; end: Date }[] = [];
@@ -176,7 +191,7 @@ export class GoogleHealthAdapter implements ProviderAdapter {
   public async createSubscription(
     publicWebhookUrl: string,
     accessToken: string,
-    authorizationToken: string = env.CRON_SECRET
+    authorizationToken: string = env.WEBHOOK_AUTH_TOKEN
   ): Promise<SubscriptionHealthResult> {
     if (env.NODE_ENV === 'test' || !publicWebhookUrl || publicWebhookUrl.includes('localhost') || accessToken.startsWith('mock_')) {
       logger.info('Skipping live Google Health subscription in test/localhost environment', {

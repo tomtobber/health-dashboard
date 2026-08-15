@@ -81,7 +81,7 @@ describe('Webhook Routes', () => {
   test('POST /api/webhooks/google accepts valid notification payload with valid Authorization header and returns 200 accepted', async () => {
     const res = await request(app)
       .post('/api/webhooks/google')
-      .set('Authorization', `Bearer ${env.CRON_SECRET}`)
+      .set('Authorization', `Bearer ${env.WEBHOOK_AUTH_TOKEN}`)
       .send({
         userId: testUserId,
         metricType: 'steps',
@@ -94,7 +94,7 @@ describe('Webhook Routes', () => {
   test('POST /api/webhooks/google returns 400 Bad Request on invalid payload missing required fields', async () => {
     const res = await request(app)
       .post('/api/webhooks/google')
-      .set('Authorization', `Bearer ${env.CRON_SECRET}`)
+      .set('Authorization', `Bearer ${env.WEBHOOK_AUTH_TOKEN}`)
       .send({});
 
     expect(res.status).toBe(400);

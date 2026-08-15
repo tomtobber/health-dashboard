@@ -26,7 +26,7 @@ function authenticateWebhookRequest(req: Request): void {
   }
 
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
-  const expectedSecret = env.CRON_SECRET;
+  const expectedSecret = env.WEBHOOK_AUTH_TOKEN;
 
   if (!safeTimingCompare(token, expectedSecret)) {
     throw new AuthenticationError('Unauthorized: Invalid webhook authorization token', {

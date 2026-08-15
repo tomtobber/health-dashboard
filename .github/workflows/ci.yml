@@ -18,6 +18,7 @@ env:
   JWT_SECRET: super-secret-jwt-key-min-32-chars-length
   ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
   CRON_SECRET: real-cron-secret-min-16-chars-long
+  WEBHOOK_AUTH_TOKEN: real-webhook-auth-token-min-16-chars
   GOOGLE_CLIENT_ID: mock-google-client-id
   GOOGLE_CLIENT_SECRET: mock-google-client-secret
   GOOGLE_REDIRECT_URI: http://localhost:3000/api/connect/google/callback
