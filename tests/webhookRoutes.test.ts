@@ -3,6 +3,7 @@ import { app } from '../src/app';
 import { db, pool } from '../src/db';
 import { users, connectedAccounts } from '../src/db/schema';
 import { encryptToken } from '../src/services/cryptoService';
+import { env } from '../src/config/env';
 import { eq } from 'drizzle-orm';
 
 describe('Webhook Routes', () => {
@@ -52,9 +53,35 @@ describe('Webhook Routes', () => {
     expect(res.text).toBe('test_challenge_code_123');
   });
 
-  test('POST /api/webhooks/google accepts valid notification payload and returns 200 accepted', async () => {
+  test('POST /api/webhooks/google fails with 401 when Authorization header is missing', async () => {
     const res = await request(app)
       .post('/api/webhooks/google')
+      .send({
+        userId: testUserId,
+        metricType: 'steps',
+      });
+
+    expect(res.status).toBe(401);
+    expect(res.body).toHaveProperty('code', 'AUTHENTICATION_ERROR');
+  });
+
+  test('POST /api/webhooks/google fails with 401 when Authorization header token is invalid', async () => {
+    const res = await request(app)
+      .post('/api/webhooks/google')
+      .set('Authorization', 'Bearer invalid_wrong_token')
+      .send({
+        userId: testUserId,
+        metricType: 'steps',
+      });
+
+    expect(res.status).toBe(401);
+    expect(res.body).toHaveProperty('code', 'AUTHENTICATION_ERROR');
+  });
+
+  test('POST /api/webhooks/google accepts valid notification payload with valid Authorization header and returns 200 accepted', async () => {
+    const res = await request(app)
+      .post('/api/webhooks/google')
+      .set('Authorization', `Bearer ${env.CRON_SECRET}`)
       .send({
         userId: testUserId,
         metricType: 'steps',
@@ -67,6 +94,7 @@ describe('Webhook Routes', () => {
   test('POST /api/webhooks/google returns 400 Bad Request on invalid payload missing required fields', async () => {
     const res = await request(app)
       .post('/api/webhooks/google')
+      .set('Authorization', `Bearer ${env.CRON_SECRET}`)
       .send({});
 
     expect(res.status).toBe(400);

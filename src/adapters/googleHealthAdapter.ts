@@ -173,7 +173,11 @@ export class GoogleHealthAdapter implements ProviderAdapter {
     };
   }
 
-  public async createSubscription(publicWebhookUrl: string, accessToken: string): Promise<SubscriptionHealthResult> {
+  public async createSubscription(
+    publicWebhookUrl: string,
+    accessToken: string,
+    authorizationToken: string = env.CRON_SECRET
+  ): Promise<SubscriptionHealthResult> {
     if (env.NODE_ENV === 'test' || !publicWebhookUrl || publicWebhookUrl.includes('localhost') || accessToken.startsWith('mock_')) {
       logger.info('Skipping live Google Health subscription in test/localhost environment', {
         operation: 'createSubscription',
@@ -194,6 +198,9 @@ export class GoogleHealthAdapter implements ProviderAdapter {
         },
         body: JSON.stringify({
           endpoint: publicWebhookUrl,
+          endpointAuthorization: {
+            authorization_token: authorizationToken,
+          },
           metricTypes: WEBHOOK_SUPPORTED_METRICS,
         }),
         serviceName: 'GoogleHealthSubscription',

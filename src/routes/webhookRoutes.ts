@@ -3,7 +3,9 @@ import { z } from 'zod';
 import { asyncHandler } from '../utils/asyncHandler';
 import { executeSync } from '../services/syncService';
 import { logger } from '../utils/logger';
-import { ValidationError } from '../errors/AppError';
+import { AuthenticationError, ValidationError } from '../errors/AppError';
+import { safeTimingCompare } from '../services/cryptoService';
+import { env } from '../config/env';
 
 export const webhookRouter = Router();
 
@@ -13,6 +15,26 @@ const webhookPayloadSchema = z.object({
   startDate: z.string().optional(),
   endDate: z.string().optional(),
 });
+
+function authenticateWebhookRequest(req: Request): void {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    throw new AuthenticationError('Unauthorized: Missing webhook authorization token', {
+      operation: 'authenticateWebhookRequest',
+      path: req.path,
+    });
+  }
+
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+  const expectedSecret = env.CRON_SECRET;
+
+  if (!safeTimingCompare(token, expectedSecret)) {
+    throw new AuthenticationError('Unauthorized: Invalid webhook authorization token', {
+      operation: 'authenticateWebhookRequest',
+      path: req.path,
+    });
+  }
+}
 
 // 1. Google Webhook Challenge Verification (GET)
 webhookRouter.get('/google', (req: Request, res: Response) => {
@@ -30,6 +52,9 @@ webhookRouter.get('/google', (req: Request, res: Response) => {
 webhookRouter.post(
   '/google',
   asyncHandler(async (req: Request, res: Response): Promise<unknown> => {
+    // Authenticate authorization_token configured during subscriber creation
+    authenticateWebhookRequest(req);
+
     const parseResult = webhookPayloadSchema.safeParse(req.body);
     if (!parseResult.success) {
       throw new ValidationError('Invalid Google webhook payload', {
