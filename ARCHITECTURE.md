@@ -1,7 +1,6 @@
 ﻿# Project Context — Personal Health Dashboard
 
 ## Vision
-
 A personal (initially single/small-user) web application that aggregates
 health and lifestyle data from multiple sources — starting with the Google
 Health API — normalizes it into one data model, lets the user add their
@@ -13,7 +12,6 @@ It should be loaded as always-active context. Update it whenever a decision
 changes — do not let decisions live only in conversation history.
 
 ## Phase Breakdown
-
 Work proceeds one phase at a time. Do not implement a future phase early,
 but every phase must be built in a way that does not block or require
 rework of a later phase. See "Architecture Principles" below for the
@@ -45,26 +43,24 @@ invariants that enforce this.
 ## Data Model
 
 ### `connected_accounts`
-
 Generic across providers from day one, even though only Google Health
 exists in phase 1.
 
 | column | notes |
-|---|---|
+| --- | --- |
 | user_id | FK to `users.id`, `ON DELETE CASCADE` |
 | provider | e.g. `google_health`, future: other integrations |
-| health_user_id | provider's own user identifier (e.g. the Google `sub` claim from the OAuth id_token) — required for exact-match webhook attribution; see "Webhook subscriber model" below |
+| health_user_id | provider's own user identifier (e.g. the Google user ID from `users.getIdentity`) — required for exact-match webhook attribution; see "Webhook subscriber model" below |
 | access_token / refresh_token | encrypted at rest |
 | scopes | |
 | status | active / disabled / needs_reauth |
 
 ### `metric_entries`
-
 One normalized table for all data, regardless of source — synced,
 manual, or from future integrations.
 
 | column | notes |
-|---|---|
+| --- | --- |
 | id | surrogate PK (uuid) |
 | user_id | FK to `users.id`, `ON DELETE CASCADE` |
 | provider | `google_health`, `manual`, future integration names |
@@ -77,6 +73,7 @@ manual, or from future integrations.
 | source_stream | `raw` \| `reconciled` (Google Health exposes both) |
 | aggregation | `raw`, `1m_avg`, `5m_avg`, `daily_avg`, ... |
 | raw_payload | jsonb, original provider response |
+| created_at | |
 | updated_at | |
 | deleted_at | nullable; soft delete, see below |
 
@@ -155,68 +152,15 @@ both are checked deliberately rather than trusted implicitly.
   what answers "when did we last successfully sync X for this user."
 - **Subscription health** — Google auto-disables webhook subscriptions
   for inactive subscribers. A scheduled job periodically confirms the
-  single project-level subscriber (see "Webhook subscriber model" below)
+  single project-level subscriber (see "Webhook Subscriber Model" below)
   is still active and re-registers it if not; webhook coverage should
   never silently degrade.
-
-## Webhook Subscriber Model (Google Health API)
-
-Corrected after initial implementation wrongly assumed a per-user
-subscription lifecycle — verified against direct citations from
-`developers.google.com/health/webhooks`.
-
-- **Subscribers are scoped to the Google Cloud project**, not to
-  individual users. There is exactly one subscriber for this
-  app, registered once via `POST .../projects/{project}/subscribers`
-  with an explicit, self-chosen `subscriberId` (4-36 chars, must match
-  `[a-z]([a-z0-9-]{2,34}[a-z0-9])`) — not the literal string `"self"`,
-  which is not a documented value and silently 404s.
-- **`subscriptionCreatePolicy: AUTOMATIC` is used** — per Google's docs,
-  this means no per-user `Subscription` resource is created or managed.
-  Eligibility for notifications is computed dynamically from each
-  user's granted OAuth consent. Connecting a Google account does
-  not trigger any subscriber API call — it only stores tokens and
-  triggers backfill. Disconnecting does not delete or modify the
-  subscriber either — it only disables the local `connected_accounts`
-  row / revokes the OAuth token.
-- **The project-level subscriber is managed by a standalone script**
-  (`npm run setup:subscriber`), run manually — once initially, and
-  again only when `WEBHOOK_SUPPORTED_METRICS` changes. It must never
-  run automatically on app startup or on every Render deploy.
-- **`GOOGLE_PROJECT_ID` and `GOOGLE_SUBSCRIBER_ID` must not have
-  silent placeholder defaults** — missing values should fail startup
-  loudly, same as `GOOGLE_CLIENT_ID`.
-- **Webhook attribution** — this is the one piece treated as a hard
-  security/correctness invariant, not just an implementation detail:
-  Google's notification payload includes `healthUserId` (their identifier
-  for the user, not this app's local UUID) — matched against
-  `connected_accounts.health_user_id`, populated from the OAuth
-  `id_token`'s `sub` claim at connect time. Attribution must be an
-  exact match only:
-  - If neither `healthUserId` nor a local user identifier is present in
-    the payload, reject immediately (before any database query is
-    built) — never let an empty match condition silently fall through to
-    a broader query.
-  - If no active connected account matches, discard the notification
-    (log + reject) — never fall back to "the first/any active
-    account." A silent fallback here means one user's real health data
-    can get written to another user's records. This exact bug shipped
-    once already this project and was caught before production use —
-    treat any future change to this function as needing the same
-    scrutiny (an explicit test with 2+ simultaneously active accounts,
-    confirming cross-attribution is impossible).
-  - This logic must run identically in every environment — no
-    branching on `DATABASE_URL` contents, hostname, or `NODE_ENV` to
-    skip or alter the safety check. If tests need a mock, inject at the
-    database-client level, not by conditionally bypassing the check
-    itself.
-
 - **Gap detection** — flag suspicious patterns from `sync_runs` /
   `metric_entries` (e.g. a zero-data day sandwiched between two
   normal-density days) as likely sync failures rather than treating all
   gaps as equally explainable (device off, etc.).
-- **Cross-stream duplication is prevented structurally**, not by
-  convention. Storage-level duplicates are already impossible (see
+- **Cross-stream duplication is prevented structurally, not by
+  convention**. Storage-level duplicates are already impossible (see
   uniqueness constraints above). Query-level double-counting — e.g.
   summing both raw and reconciled values for an overlapping window — is
   avoided by never querying `metric_entries` directly for
@@ -230,6 +174,146 @@ subscription lifecycle — verified against direct citations from
   they differ meaningfully. Useful signal on how much reconciliation is
   actually correcting, and would surface if the `external_id`/key
   assumptions above are behaving unexpectedly.
+
+## Webhook Subscriber Model (Google Health API)
+
+Rebuilt twice after initial implementations wrongly assumed behavior
+not actually documented — every claim below is verified against a
+direct fetch of `developers.google.com/health/webhooks` and
+`developers.google.com/health/reference/rest/v4/users/getIdentity`, not
+paraphrase. This API surface has repeatedly produced confident-but-wrong
+claims (wrong scope format, a non-existent "domain verification" step,
+fabricated data types, wrong field names/casing tried three times,
+wrong verification mechanism, wrong response codes, a missing required
+scope) — re-verify anything below against a live fetch before trusting
+it further if it's been more than a few weeks, since this API is
+actively evolving.
+
+### Subscriber model:
+- Subscribers are scoped to the Google Cloud project, not to
+  individual users. Exactly one subscriber for this app,
+  registered via `POST https://health.googleapis.com/v4/projects/{project_number}/subscribers?subscriberId={subscriberId}`.
+- `{project_number}` must be the numeric Google Cloud project
+  number (e.g. `1041840627764` — extractable from the prefix of an
+  OAuth client ID, `{number}-{random}.apps.googleusercontent.com`),
+  not the string project ID (`health-dashboard-project`) — Google's
+  own docs list this specific mistake in their common-errors table.
+- `subscriberId` is self-chosen, 4-36 chars, matching
+  `[a-z]([a-z0-9-]{2,34}[a-z0-9])` — not the literal string `"self"`,
+  which silently 404s.
+- Request body field is `endpointAuthorization.secret` (not
+  `authorizationToken` or `authorization_token` — both tried and
+  rejected). The value is the full auth scheme string, e.g.
+  `"Bearer <WEBHOOK_AUTH_TOKEN>"` — not the bare token.
+- `subscriberConfigs` is a list of one entry containing a
+  `dataTypes` array (plural) of all metric type strings — not one
+  entry per metric with a singular `dataType` field.
+- `subscriptionCreatePolicy: AUTOMATIC` — no per-user `Subscription`
+  resource is created or managed; eligibility is computed dynamically
+  from each user's granted OAuth consent. Connecting a Google account
+  does not trigger any subscriber API call — it only stores tokens
+  and triggers backfill. Disconnecting does not touch the
+  subscriber — only disables the local `connected_accounts` row /
+  revokes the OAuth token.
+- Managed by a standalone script (`npm run setup:subscriber`), run
+  manually — once initially, again only when `WEBHOOK_SUPPORTED_METRICS`
+  changes. Must never run automatically on app startup or on every
+  Render deploy.
+- `GOOGLE_PROJECT_ID`, `GOOGLE_SUBSCRIBER_ID` must not have silent
+  placeholder defaults — missing values fail startup loudly, same as
+  `GOOGLE_CLIENT_ID`.
+- `include_granted_scopes` must never be added to the OAuth authorize
+  URL. This project's OAuth client briefly requested legacy Google Fit
+  `fitness.*` scopes early in development before being corrected — if
+  that consent is still in the client's history, `include_granted_scopes`
+  would union it back into future tokens, and Google Health's data
+  plane rejects mixed legacy/new-API scopes with an opaque error.
+  Guarded by an automated test asserting its absence.
+
+### Endpoint verification handshake — not a `GET`/`hub.challenge` pattern:
+- Two automated `POST` requests, both with body `{"type": "verification"}`,
+  sent synchronously during subscriber create/update.
+- **Authorized Handshake**: sent with the configured `Authorization`
+  header — respond `200 OK` or `201 Created`.
+- **Unauthorized Challenge**: sent without credentials — respond
+  `401 Unauthorized` or `403 Forbidden`.
+- Both must pass or the API call fails with `FAILED_PRECONDITION`.
+
+### Real notification payload — nested, not flat:
+```json
+{
+  "data": {
+    "healthUserId": "...",
+    "operation": "UPSERT | DELETE",
+    "dataType": "steps",
+    "intervals": [{ "physicalTimeInterval": { "startTime": "...", "endTime": "..." } }]
+  }
+}
+```
+- Respond `204 No Content` immediately, process asynchronously
+  after (not `200` + JSON body). Any other status/timeout triggers
+  Google's retry (stored up to 7 days, exponential backoff, then
+  discarded).
+- Notifications batch up to 99 messages per push.
+- **Not yet implemented, tracked as a future hardening item**: Google
+  cryptographically signs every notification payload (Tink/ECDSA P-256,
+  keys rotate every 30 days, public keyset at
+  `gstatic.com/googlehealthapi/webhooks/webhooks_public_keyset.json`,
+  signature in the `GOOGLE-HEALTH-API-SIGNATURE` header). The current
+  shared-secret `Authorization` header check only proves "knows the
+  secret" — the signature would additionally prove authenticity/
+  tamper-evidence. Worth implementing for real security, not just
+  MVP-adequate.
+
+### User identity mapping — via `users.getIdentity`, not decoding the OAuth `id_token`:
+- `GET https://health.googleapis.com/v4/users/me/identity` →
+  `{ name, legacyUserId, healthUserId }`.
+- Requires the `https://www.googleapis.com/auth/googlehealth.profile.readonly`
+  scope — a scope this project didn't discover it needed until
+  implementing this call; not part of the original three Health scopes.
+  Confirm the full current scope list (below) is genuinely complete
+  before assuming no more gaps exist.
+- Populates `connected_accounts.health_user_id` at connect time. Scopes
+  don't retroactively apply to already-issued tokens — any account
+  connected before this scope was added must reconnect for
+  `health_user_id` to populate.
+
+### Current full OAuth scope list:
+- `openid`
+- `https://www.googleapis.com/auth/userinfo.email`
+- `https://www.googleapis.com/auth/userinfo.profile`
+- `https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly`
+- `https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly`
+- `https://www.googleapis.com/auth/googlehealth.sleep.readonly`
+- `https://www.googleapis.com/auth/googlehealth.profile.readonly`
+
+### Webhook attribution — hard security/correctness invariant:
+- Matched against `connected_accounts.health_user_id` (populated via
+  `getIdentity`, above). Attribution must be an exact match only:
+  - If neither `healthUserId` nor a local user identifier is present in
+    the payload, reject immediately (before any database query is
+    built) — never let an empty match condition (e.g. `or()` with an
+    empty array) silently fall through to a broader query.
+  - If no active connected account matches, discard the notification
+    (log + reject) — never fall back to "the first/any active
+    account." A silent fallback here means one user's real health data
+    can get written to another user's records. This exact bug shipped
+    once already this project and was caught before production use —
+    treat any future change to this function as needing the same
+    scrutiny (an explicit test with 2+ simultaneously active accounts,
+    confirming cross-attribution is impossible, tested against the real
+    nested payload shape above — not a flat mock shape).
+  - This logic must run identically in every environment — no
+    branching on `DATABASE_URL` contents, hostname, or `NODE_ENV` to
+    skip or alter the safety check. If tests need a mock, inject at the
+    database-client level, not by conditionally bypassing the check
+    itself.
+  - **Live-verified, not just test-suite-verified**: before trusting this
+    in production, confirm with two real, simultaneously-connected
+    accounts against the deployed Render instance that a webhook for one
+    never lands in the other's `metric_entries` — automated tests passing
+    is necessary but has not been sufficient evidence anywhere else in
+    this project.
 
 ## Architecture Principles (do not violate, regardless of phase)
 
@@ -257,12 +341,6 @@ subscription lifecycle — verified against direct citations from
    `vo2Max`/`dailyVo2Max` (note: `runVo2Max` specifically is
    webhook-supported — these are different types), `electrocardiogram`,
    `irregularRhythmNotification`, `coreBodyTemperature`, `bloodPressure`.
-   This list has already changed materially once mid-project — re-verify
-   against the live docs (with direct quotes, not summary) before trusting
-   it again; this exact API surface has produced multiple incorrect
-   first-pass claims this project (wrong OAuth scope format, a
-   non-existent "domain verification" step, a fabricated data type, and
-   an initially-reversed claim about VO2 max webhook support).
 4. All writes are idempotent upserts keyed as described above — running
    sync or reconciliation repeatedly, on overlapping ranges, must never
    create duplicates.
@@ -302,28 +380,21 @@ separate task from ongoing sync, not a variant of it:
   - `https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly`
   - `https://www.googleapis.com/auth/googlehealth.sleep.readonly`
   - `https://www.googleapis.com/auth/googlehealth.profile.readonly`
+    (required for `users.getIdentity` — see "Webhook Subscriber Model"
+    for why, and note this list has already grown twice unexpectedly;
+    don't assume it's final)
 - Most data types support ~90 days per query; heart rate, active minutes,
   total calories, and calories-in-heart-rate-zone are capped at 14 days per
   request — batch requests accordingly.
 - Failed webhook deliveries retry for up to 7 days before being dropped;
   the reconciliation job is the safety net beyond that window (see
   Architecture Principles for which data types this actually applies to).
-- Webhook subscriber endpoints must be public HTTPS (TLS 1.2+).
-  Official Google Health Webhooks Specification Details:
-  - **Subscriber Creation**: Configured via `POST /v4/projects/{project_number}/subscribers?subscriberId={subscriberId}`
-    where `{project_number}` is the numeric Google Cloud project number.
-    Payload specifies `endpointUri`, `endpointAuthorization: { secret: "Bearer <WEBHOOK_AUTH_TOKEN>" }`,
-    and `subscriberConfigs: [ { dataTypes: [...28 types], subscriptionCreatePolicy: "AUTOMATIC" } ]`.
-  - **Verification Probes**: Google verifies the endpoint at subscription creation time by sending two `POST`
-    requests with `{"type":"verification"}` (one with Bearer Authorization expecting 200/204, one without expecting 401).
-  - **Notification Format**: Notifications arrive via `POST` with payloads nested under `data` containing
-    `healthUserId`, `dataType`, `operation`, and `intervals[].physicalTimeInterval.{startTime,endTime}`.
-  - **Response Contract**: Webhook route responds immediately with `204 No Content`, enqueuing sync execution asynchronously.
-  - **User Attribution**: Local user mapping is resolved strictly against `connected_accounts.health_user_id`,
-    populated via Google's documented `users.getIdentity` endpoint (or `id_token.sub` fallback).
-  - **Known Hardening Gap (Follow-up)**: In addition to the Bearer shared secret, Google Health API provides
-    ECDSA P-256 cryptographic signatures via `GOOGLE-HEALTH-API-SIGNATURE` (Tink-compatible). Flagged as a future
-    security hardening item.
+- Webhook subscriber endpoints must be public HTTPS (TLS 1.2+) —
+  Google performs a verification challenge against the endpoint at
+  subscription time. See "Deployment & Staging Environment" for the
+  resolved hosting decision. This requirement applies to the backend
+  regardless of frontend choice (web page vs. native app) — that's a
+  separate, independent decision deferred to Phase 5.
 
 ## Deployment & Staging Environment
 
@@ -434,6 +505,6 @@ the phase it affects:
    count), with the raw response preserved in `raw_payload`.
 3. **Still open: raw_payload pruning** — how long full-resolution `raw_payload`
    data is retained before pruning — not yet decided — Phase 2.
-4. **Adapter interface generalization** — Whether phase 4's adapter interface
-   should be generalized now or hardcoded for 1–2 known integrations first — Phase 4.
-5. **Frontend choice** — web page vs. native app — Phase 5.
+4. **Whether phase 4's adapter interface should be generalized now or
+   hardcoded for 1–2 known integrations first** — Phase 4.
+5. **Frontend choice**: web page vs. native app — Phase 5.
