@@ -413,11 +413,16 @@ forward).
 
 Remaining items — none block Phase 2 from starting, each is scoped to
 the phase it affects:
-1. Exact job scheduling mechanism for the reconciliation poller and
-   backfill queue (cron, queue-based, etc.) — Phase 2.
-2. Exact downsampling interval(s) per high-frequency data type, and how
-   long full-resolution `raw_payload` data is retained before pruning —
-   Phase 2.
-3. Whether phase 4's adapter interface should be generalized now or
-   hardcoded for 1–2 known integrations first — Phase 4.
-4. Frontend choice: web page vs. native app — Phase 5.
+1. **Resolved: job scheduling** — GitHub Actions `schedule` cron pings a
+   secret-authenticated `/api/sync/scheduled` endpoint, which checks
+   `sync_runs` for what's actually due rather than trusting exact timing
+   (see Deployment & Staging Environment).
+2. **Resolved: downsampling interval** — dual-tier, not a single choice.
+   High-frequency types are aggregated to both 1-minute (`1m_avg`)
+   and 5-minute (`5m_avg`) buckets at ingestion (min/max/avg/sample
+   count), with the raw response preserved in `raw_payload`.
+3. **Still open: raw_payload pruning** — how long full-resolution `raw_payload`
+   data is retained before pruning — not yet decided — Phase 2.
+4. **Adapter interface generalization** — Whether phase 4's adapter interface
+   should be generalized now or hardcoded for 1–2 known integrations first — Phase 4.
+5. **Frontend choice** — web page vs. native app — Phase 5.
