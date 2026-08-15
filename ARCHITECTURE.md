@@ -22,8 +22,9 @@ invariants that enforce this.
 1. **Connect flow** — OAuth 2.0 flow letting a user link their Google
    Health account. Creates a user + connected-account record with stored,
    encrypted tokens.
-2. **Sync + storage** — Retrieve the user's data (webhook-driven, with a
-   polling reconciliation job as backup) and store it in a normalized,
+2. **Sync + storage** — Retrieve the user's data (webhook-driven where
+   Google supports it, polling elsewhere — see Architecture Principle 3
+   for the current, verified split) and store it in a normalized,
    provider-agnostic data model.
 3. **Custom metrics** — Let the user define and log their own metric types
    directly in the app (e.g. calories, alcohol units), stored in the same
@@ -184,14 +185,29 @@ assumptions above are behaving unexpectedly.
    implements the same adapter interface: `authenticate`, `sync`,
    `mapToNormalizedSchema`. Adding a new source should not require
    touching the storage or chart layers.
-3. Sync strategy is **per data type, not uniform** — Google Health API
-   webhooks currently only cover steps, altitude, distance, floors,
-   weight, and sleep. For those, webhooks trigger immediate syncs, with
-   a scheduled reconciliation job as a backup for missed/delayed
-   deliveries and disabled subscriptions. For everything without webhook
-   support — notably heart rate, HRV, SpO2, respiratory rate, VO2 max —
-   **polling is the primary and only sync mechanism**, not a backup.
-   Confirm this list against current docs periodically; it may expand.
+3. Sync strategy is **per data type, not uniform**. As of the May 26,
+   2026 release, Google Health API webhooks cover a much wider set than
+   originally documented here — confirmed via direct citation from
+   developers.google.com/health/webhooks: Active Zone Minutes, Activity
+   Level, Altitude, Blood Glucose, Body Fat, Calories In Heart Rate Zone,
+   Daily Heart Rate Variability, Daily Heart Rate Zones, Daily Oxygen
+   Saturation, Daily Respiratory Rate, Daily Resting Heart Rate, Daily
+   Sleep Temperature Derivations, Distance, Exercise, Floors, Heart Rate,
+   Heart Rate Variability, Height, Hydration Log, Nutrition Log,
+   Respiratory Rate Sleep Summary, Run VO2 Max, Sedentary Period, Sleep,
+   Steps, Time In Heart Rate Zone, Total Calories, Weight. For those,
+   webhooks trigger immediate syncs, with a scheduled reconciliation job
+   as backup for missed/delayed deliveries and disabled subscriptions.
+   **Confirmed still polling-only** (no webhook support found): generic
+   `vo2Max`/`dailyVo2Max` (note: `runVo2Max` specifically *is*
+   webhook-supported — these are different types), `electrocardiogram`,
+   `irregularRhythmNotification`, `coreBodyTemperature`, `bloodPressure`.
+   This list has already changed materially once mid-project — re-verify
+   against the live docs (with direct quotes, not summary) before trusting
+   it again; this exact API surface has produced multiple incorrect
+   first-pass claims this project (wrong OAuth scope format, a
+   non-existent "domain verification" step, a fabricated data type, and
+   an initially-reversed claim about VO2 max webhook support).
 4. All writes are idempotent upserts keyed as described above — running
    sync or reconciliation repeatedly, on overlapping ranges, must never
    create duplicates.
@@ -216,11 +232,8 @@ separate task from ongoing sync, not a variant of it:
   significant time to paginate through.
 - The UI shows a syncing/in-progress state and displays data as it
   arrives, rather than blocking until backfill is fully complete.
-- Pulls up to 1 full year (365 days) by looping across multiple 14-day
-  (for high-frequency types) and 90-day (for low-frequency types) API
-  request windows.
-- Resumable and idempotent (`ON CONFLICT DO UPDATE`) so an interrupted
-  backfill safely restarts or continues without duplicate rows.
+- Should be resumable/idempotent (same upsert logic as regular sync)
+  so a failed or interrupted backfill can safely restart or continue.
 
 ## Known Constraints From the Provider
 
@@ -262,23 +275,13 @@ forward).
   saves little. Render avoids GCP billing-account/IAM overhead, deploys
   directly from the GitHub repo (same repo the CI pipeline already runs
   against), and gives a public HTTPS endpoint with no separate tunnel
-  needed once deployed.
-- **Cold-Start Awareness on Free Tier**: On Render's Free tier, the web
-  service sleeps after 15 minutes of inactivity. Both incoming Google
-  webhook deliveries and scheduled cron pings incur a ~30–50s cold-start
-  delay when waking the instance. Google retries delayed/failed webhook
-  deliveries for up to 7 days, and the reconciliation sweep acts as the
-  ultimate backstop for missed points.
-- **Scheduling Architecture (GitHub Actions Scheduled Workflow)**:
-  Periodic background synchronization (reconciliation sweeps, un-webhooked
-  metric polling, subscription health checks) is triggered via a **GitHub
-  Actions scheduled cron workflow** (`.github/workflows/scheduled-sync.yml`)
-  calling `POST /api/sync/scheduled`.
-- **State-Driven Execution ("What's Actually Due")**: The scheduled
-  endpoint does **not** blindly trust the external ping's timing. It
-  inspects the database (`sync_runs` and `connected_accounts`) to
-  determine which users, un-webhooked metrics, and reconciliation windows
-  have actually elapsed their required interval and are due for syncing.
+  needed once deployed. Cold-start behavior is also more predictable
+  than Cloud Run's scale-to-zero default, which matters while validating
+  sync-timing logic. **Render is used for compute only — not its own
+  Postgres product**, which is a separate offering from the database
+  decision below and has a hard 30-day free-tier expiration with
+  permanent data deletion. `DATABASE_URL` points at Neon regardless of
+  where the app is hosted.
 - **Database: Neon** (Postgres), region **AWS Europe (Frankfurt,
   `aws-eu-central-1`)**. Chosen for two reasons: (1) latency — the
   pairing that matters is backend-server-to-database, not
@@ -290,11 +293,14 @@ forward).
   without creating a new project and migrating data, so this isn't a
   "fix it later" setting. Free tier, zero GCP setup, standard
   Postgres — works identically with Drizzle regardless of host, and
-  easy to swap for Supabase later if ever needed. Free-tier
+  easy to swap for Supabase later if ever needed (see earlier hosting
+  comparison; the two are functionally interchangeable here). Free-tier
   compute suspends after 5 minutes idle to save compute allowance, but
   storage is persistent and unaffected — data is never at risk from
-  inactivity, unlike Render's free Postgres. First query after idle wakes
-  compute in milliseconds.
+  inactivity, unlike Render's free Postgres (which is not used here;
+  see note below). First query after idle wakes compute in milliseconds
+  — expect this as a small, expected latency blip in `sync_runs` timing
+  after quiet periods, not a bug.
 - **Test vs. live branch separation**: two Neon branches exist —
   `DATABASE_URL` (in local `.env`) points at the **test branch**, used
   by the app locally, the test suite, and CI. The **primary/live branch**
@@ -317,21 +323,38 @@ forward).
   multi-tenant/org features solve a bigger problem than a personal-scale
   app has. Revisit only if this ever grows into genuine multi-user
   signup beyond a handful of manually-added accounts.
-- **Secrets Management**: `ENCRYPTION_KEY`, `JWT_SECRET`,
-  `GOOGLE_CLIENT_SECRET`, `CRON_SECRET`, and `DATABASE_URL` must be set
-  via Render's environment/secrets config (and `CRON_SECRET` in GitHub
-  Actions repository secrets), **never** committed or left as
-  `.env.example` values.
+- **Secrets**: `ENCRYPTION_KEY`, `JWT_SECRET`, `GOOGLE_CLIENT_SECRET`,
+  and `DATABASE_URL` must be set via Render's environment/secrets
+  config, not committed or left as `.env.example` values — this stopped
+  being hypothetical once a real account's tokens were encrypted and
+  stored during Phase 1 manual testing.
 - **Test-user expiry**: while the app remains in Google's "Testing"
   publishing status, authorizations from test users (including the
   developer's own account) expire after 7 days regardless of hosting —
   expect to periodically re-run the connect flow until the app goes
   through Google's verification process.
+- **Scheduling on Render free tier**: the free Web Service spins down
+  after 15 minutes idle, pausing in-process timers. Rather than pay for
+  an always-on instance now, the scheduler is built
+  architecture-agnostic: an in-process scheduler runs when the process
+  is alive, plus a secret-authenticated `POST /api/sync/scheduled`
+  endpoint that a GitHub Actions scheduled workflow (`on: schedule`)
+  pings periodically to wake the instance and run due jobs — no new
+  external service/account needed, since GitHub Actions is already used
+  for CI. The endpoint checks `sync_runs` for what's actually overdue
+  per job type rather than trusting the ping's exact timing, so a missed
+  or delayed cron tick doesn't skip work. Upgrading to Render's Starter
+  plan ($7/mo, always-on) later requires no code changes. Accepted
+  tradeoff: webhook deliveries also get a cold-start delay (~30-50s) on
+  free tier, not just polling — fine given Google's 7-day webhook retry
+  window, just worth knowing this isn't truly instant yet.
 
 ## Open Questions
 
 Remaining items — none block Phase 2 from starting, each is scoped to
 the phase it affects:
+- Exact job scheduling mechanism for the reconciliation poller and
+  backfill queue (cron, queue-based, etc.) — Phase 2.
 - Exact downsampling interval(s) per high-frequency data type, and how
   long full-resolution `raw_payload` data is retained before pruning —
   Phase 2.
