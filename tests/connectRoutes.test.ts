@@ -6,7 +6,7 @@ import { encryptToken } from '../src/services/cryptoService';
 import { CryptographicError } from '../src/errors/AppError';
 import { GoogleHealthAdapter } from '../src/adapters/googleHealthAdapter';
 import { db, pool } from '../src/db';
-import { users } from '../src/db/schema';
+import { users, connectedAccounts } from '../src/db/schema';
 import { eq } from 'drizzle-orm';
 
 describe('Connect Routes API (Google OAuth)', () => {
@@ -28,6 +28,15 @@ describe('Connect Routes API (Google OAuth)', () => {
         .returning();
 
       testUserId = user.id;
+
+      await db.insert(connectedAccounts).values({
+        userId: testUserId,
+        provider: 'google_health',
+        accessToken: encryptToken('mock_access_token_connect'),
+        refreshToken: encryptToken('mock_refresh_token_connect'),
+        scopes: JSON.stringify(GoogleHealthAdapter.SCOPES),
+        status: 'active',
+      });
     } else {
       testUserId = 'b0000000-0000-0000-0000-000000000002';
     }
@@ -107,5 +116,15 @@ describe('Connect Routes API (Google OAuth)', () => {
     expect(callbackRes.body.message).toContain('successfully connected');
     expect(callbackRes.body.provider).toBe('google_health');
     expect(callbackRes.body.scopes).toEqual(GoogleHealthAdapter.SCOPES);
+  });
+
+  test('POST /api/connect/google/sync-subscription updates existing webhook subscription to latest metric types', async () => {
+    const res = await request(app)
+      .post('/api/connect/google/sync-subscription')
+      .set('Authorization', `Bearer ${authToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('active', true);
+    expect(res.body.message).toContain('updated');
   });
 });

@@ -39,28 +39,29 @@ export async function checkAndRenewWebhookSubscriptions(userId: string): Promise
   }
 
   const decryptedAccessToken = decryptToken(account.accessToken);
-  const healthCheck = await adapter.checkSubscriptionHealth?.(undefined, decryptedAccessToken);
+  const webhookUrl = `${env.APP_BASE_URL}/api/webhooks/google`;
 
-  if (healthCheck && !healthCheck.active) {
-    logger.warn('Subscription inactive, attempting auto-renewal', {
-      operation: 'checkAndRenewWebhookSubscriptions:renew',
+  // Update/renew subscription to ensure full latest WEBHOOK_SUPPORTED_METRICS coverage
+  const syncResult = await adapter.updateSubscription(webhookUrl, decryptedAccessToken);
+
+  if (!syncResult.active) {
+    logger.warn('Subscription update returned inactive status, attempting fresh create', {
+      operation: 'checkAndRenewWebhookSubscriptions:fallbackCreate',
       userId,
-      error: healthCheck.error,
+      error: syncResult.error,
     });
 
-    const webhookUrl = `${env.APP_BASE_URL}/api/webhooks/google`;
-    const renewalResult = await adapter.createSubscription?.(webhookUrl, decryptedAccessToken);
-
+    const createResult = await adapter.createSubscription(webhookUrl, decryptedAccessToken);
     return {
-      subscriptionId: renewalResult?.subscriptionId || 'renewed_sub',
-      status: renewalResult?.active ? 'active' : 'disabled',
+      subscriptionId: createResult.subscriptionId || 'renewed_sub',
+      status: createResult.active ? 'active' : 'disabled',
       lastVerifiedAt: new Date(),
-      error: renewalResult?.error,
+      error: createResult.error,
     };
   }
 
   return {
-    subscriptionId: 'active_sub',
+    subscriptionId: syncResult.subscriptionId || 'active_sub',
     status: 'active',
     lastVerifiedAt: new Date(),
   };

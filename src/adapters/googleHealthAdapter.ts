@@ -259,6 +259,14 @@ export class GoogleHealthAdapter implements ProviderAdapter {
         retries: 2,
       });
 
+      // If subscriber already exists (409 Conflict), seamlessly patch with full updated metricTypes
+      if (response.status === 409) {
+        logger.info('Google Health subscriber already exists (409); patching subscriber with latest metricTypes', {
+          operation: 'createSubscription:fallbackPatch',
+        });
+        return this.updateSubscription(publicWebhookUrl, accessToken, authorizationToken);
+      }
+
       if (!response.ok) {
         const errorText = await response.text();
         logger.warn('Google Health subscription creation returned non-200', {
@@ -290,6 +298,126 @@ export class GoogleHealthAdapter implements ProviderAdapter {
       return {
         active: false,
         error: errMsg,
+      };
+    }
+  }
+
+  public async updateSubscription(
+    publicWebhookUrl: string,
+    accessToken: string,
+    authorizationToken: string = env.WEBHOOK_AUTH_TOKEN,
+    subscriptionId?: string
+  ): Promise<SubscriptionHealthResult> {
+    if (env.NODE_ENV === 'test' || !publicWebhookUrl || publicWebhookUrl.includes('localhost') || accessToken.startsWith('mock_')) {
+      logger.info('Skipping live Google Health subscription update in test/localhost environment', {
+        operation: 'updateSubscription',
+        publicWebhookUrl,
+      });
+      return {
+        active: true,
+        subscriptionId: subscriptionId || 'mock_sub_updated_' + Date.now(),
+      };
+    }
+
+    try {
+      const targetId = subscriptionId || 'self';
+      const response = await fetchWithTimeout(
+        `https://www.googleapis.com/googlehealth/v1/subscribers/${targetId}?updateMask=endpoint,endpointAuthorization,metricTypes`,
+        {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            endpoint: publicWebhookUrl,
+            endpointAuthorization: {
+              authorization_token: authorizationToken,
+            },
+            metricTypes: WEBHOOK_SUPPORTED_METRICS,
+          }),
+          serviceName: 'GoogleHealthSubscriptionPatch',
+          timeoutMs: 8000,
+          retries: 2,
+        }
+      );
+
+      // If subscriber does not exist yet (404), fall back to createSubscription
+      if (response.status === 404) {
+        logger.info('Subscriber not found on PATCH (404); registering fresh subscriber', {
+          operation: 'updateSubscription:fallbackCreate',
+        });
+        return this.createSubscription(publicWebhookUrl, accessToken, authorizationToken);
+      }
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        logger.warn('Google Health subscription update returned non-200', {
+          operation: 'updateSubscription',
+          status: response.status,
+          error: errorText,
+        });
+        return {
+          active: false,
+          error: `HTTP ${response.status}: ${errorText}`,
+        };
+      }
+
+      const resBody: unknown = await response.json();
+      const subId = typeof resBody === 'object' && resBody !== null && 'id' in resBody
+        ? String((resBody as { id: unknown }).id)
+        : targetId;
+
+      return {
+        active: true,
+        subscriptionId: subId,
+      };
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      logger.warn('Failed to update Google Health subscription', {
+        operation: 'updateSubscription',
+        error: errMsg,
+      });
+      return {
+        active: false,
+        error: errMsg,
+      };
+    }
+  }
+
+  public async deleteSubscription(
+    subscriptionId?: string,
+    accessToken?: string
+  ): Promise<SubscriptionHealthResult> {
+    if (env.NODE_ENV === 'test' || !accessToken || accessToken.startsWith('mock_')) {
+      return { active: true, subscriptionId };
+    }
+
+    try {
+      const targetId = subscriptionId || 'self';
+      const response = await fetchWithTimeout(`https://www.googleapis.com/googlehealth/v1/subscribers/${targetId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${accessToken}` },
+        serviceName: 'GoogleHealthSubscriptionDelete',
+        timeoutMs: 8000,
+        retries: 1,
+      });
+
+      if (!response.ok && response.status !== 404) {
+        const errorText = await response.text();
+        return {
+          active: false,
+          subscriptionId,
+          error: `Subscription deletion returned status ${response.status}: ${errorText}`,
+        };
+      }
+
+      return { active: true, subscriptionId };
+    } catch (err: unknown) {
+      return {
+        active: false,
+        subscriptionId,
+        error: err instanceof Error ? err.message : String(err),
       };
     }
   }
