@@ -12,6 +12,7 @@ export const connectedAccounts = pgTable('connected_accounts', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
   provider: text('provider').notNull(),
+  healthUserId: text('health_user_id'),
   accessToken: text('access_token').notNull(),
   refreshToken: text('refresh_token').notNull(),
   scopes: text('scopes').notNull(),

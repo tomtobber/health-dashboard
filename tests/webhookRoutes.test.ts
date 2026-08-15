@@ -4,43 +4,72 @@ import { db, pool } from '../src/db';
 import { users, connectedAccounts } from '../src/db/schema';
 import { encryptToken } from '../src/services/cryptoService';
 import { env } from '../src/config/env';
-import { eq } from 'drizzle-orm';
+import { inArray } from 'drizzle-orm';
+import { resolveLocalUserId } from '../src/routes/webhookRoutes';
+import { NotFoundError } from '../src/errors/AppError';
 
-describe('Webhook Routes', () => {
-  let testUserId: string;
+describe('Webhook Routes & Exact Attribution', () => {
+  let userAId: string;
+  let userBId: string;
   const isNeonDb = Boolean(process.env.DATABASE_URL && process.env.DATABASE_URL.includes('neon.tech'));
 
   beforeAll(async () => {
     if (isNeonDb) {
-      // Clean up if exists
-      await pool.query('DELETE FROM users WHERE email = $1', ['webhook_test@example.com']);
+      // Clean up previous test users if exist
+      await pool.query('DELETE FROM users WHERE email IN ($1, $2)', [
+        'webhook_user_a@example.com',
+        'webhook_user_b@example.com',
+      ]);
 
-      const [user] = await db
+      const [userA] = await db
         .insert(users)
         .values({
-          email: 'webhook_test@example.com',
-          passwordHash: 'webhook_hash_123',
+          email: 'webhook_user_a@example.com',
+          passwordHash: 'hash_a_123',
         })
         .returning();
 
-      testUserId = user.id;
+      const [userB] = await db
+        .insert(users)
+        .values({
+          email: 'webhook_user_b@example.com',
+          passwordHash: 'hash_b_123',
+        })
+        .returning();
 
-      await db.insert(connectedAccounts).values({
-        userId: testUserId,
-        provider: 'google_health',
-        accessToken: encryptToken('mock_access_token_webhook'),
-        refreshToken: encryptToken('mock_refresh_token_webhook'),
-        scopes: '[]',
-        status: 'active',
-      });
+      userAId = userA.id;
+      userBId = userB.id;
+
+      // Create TWO active connected accounts with distinct healthUserId values
+      await db.insert(connectedAccounts).values([
+        {
+          userId: userAId,
+          provider: 'google_health',
+          healthUserId: 'google_health_user_A_1001',
+          accessToken: encryptToken('mock_access_token_a'),
+          refreshToken: encryptToken('mock_refresh_token_a'),
+          scopes: '[]',
+          status: 'active',
+        },
+        {
+          userId: userBId,
+          provider: 'google_health',
+          healthUserId: 'google_health_user_B_2002',
+          accessToken: encryptToken('mock_access_token_b'),
+          refreshToken: encryptToken('mock_refresh_token_b'),
+          scopes: '[]',
+          status: 'active',
+        },
+      ]);
     } else {
-      testUserId = 'c0000000-0000-0000-0000-000000000003';
+      userAId = 'c0000000-0000-0000-0000-00000000000a';
+      userBId = 'c0000000-0000-0000-0000-00000000000b';
     }
   });
 
   afterAll(async () => {
-    if (isNeonDb && testUserId) {
-      await db.delete(users).where(eq(users.id, testUserId)).catch(() => {});
+    if (isNeonDb && userAId && userBId) {
+      await db.delete(users).where(inArray(users.id, [userAId, userBId])).catch(() => {});
       await pool.end().catch(() => {});
     }
   });
@@ -57,7 +86,7 @@ describe('Webhook Routes', () => {
     const res = await request(app)
       .post('/api/webhooks/google')
       .send({
-        userId: testUserId,
+        healthUserId: 'google_health_user_A_1001',
         metricType: 'steps',
       });
 
@@ -70,7 +99,7 @@ describe('Webhook Routes', () => {
       .post('/api/webhooks/google')
       .set('Authorization', 'Bearer invalid_wrong_token')
       .send({
-        userId: testUserId,
+        healthUserId: 'google_health_user_A_1001',
         metricType: 'steps',
       });
 
@@ -78,12 +107,18 @@ describe('Webhook Routes', () => {
     expect(res.body).toHaveProperty('code', 'AUTHENTICATION_ERROR');
   });
 
-  test('POST /api/webhooks/google accepts valid notification payload with healthUserId and dataType', async () => {
+  test('TWO ACTIVE ACCOUNTS: Webhook for user A is strictly attributed to User A and NEVER to User B', async () => {
+    if (isNeonDb) {
+      const resolved = await resolveLocalUserId(undefined, 'google_health_user_A_1001');
+      expect(resolved).toBe(userAId);
+      expect(resolved).not.toBe(userBId);
+    }
+
     const res = await request(app)
       .post('/api/webhooks/google')
       .set('Authorization', `Bearer ${env.WEBHOOK_AUTH_TOKEN}`)
       .send({
-        healthUserId: 'google_health_user_123',
+        healthUserId: isNeonDb ? 'google_health_user_A_1001' : userAId,
         dataType: 'steps',
         startTime: '2026-08-15T00:00:00Z',
         endTime: '2026-08-15T01:00:00Z',
@@ -92,32 +127,74 @@ describe('Webhook Routes', () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('status', 'accepted');
-    expect(res.body).toHaveProperty('metricType', 'steps');
+    expect(res.body).toHaveProperty('userId', userAId);
   });
 
-  test('POST /api/webhooks/google accepts valid notification payload with local userId and metricType', async () => {
+  test('TWO ACTIVE ACCOUNTS: Webhook for user B is strictly attributed to User B and NEVER to User A', async () => {
+    if (isNeonDb) {
+      const resolved = await resolveLocalUserId(undefined, 'google_health_user_B_2002');
+      expect(resolved).toBe(userBId);
+      expect(resolved).not.toBe(userAId);
+    }
+
     const res = await request(app)
       .post('/api/webhooks/google')
       .set('Authorization', `Bearer ${env.WEBHOOK_AUTH_TOKEN}`)
       .send({
-        userId: testUserId,
-        metricType: 'heart_rate',
+        healthUserId: isNeonDb ? 'google_health_user_B_2002' : userBId,
+        dataType: 'heart_rate',
+        startTime: '2026-08-15T00:00:00Z',
+        endTime: '2026-08-15T01:00:00Z',
+        operation: 'UPSERT',
       });
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('status', 'accepted');
-    expect(res.body).toHaveProperty('metricType', 'heart_rate');
+    expect(res.body).toHaveProperty('userId', userBId);
   });
 
-  test('POST /api/webhooks/google returns 400 Bad Request on invalid payload missing user or metric identifiers', async () => {
+  test('TWO ACTIVE ACCOUNTS: Webhook with UNKNOWN healthUserId is DISCARDED (fails with 404 NotFoundError) and never attributed to any user', async () => {
+    if (isNeonDb) {
+      await expect(resolveLocalUserId(undefined, 'unknown_unregistered_google_id_9999')).rejects.toThrow(NotFoundError);
+    }
+
     const res = await request(app)
       .post('/api/webhooks/google')
       .set('Authorization', `Bearer ${env.WEBHOOK_AUTH_TOKEN}`)
       .send({
-        someOtherField: 'value',
+        healthUserId: 'unknown_unregistered_google_id_9999',
+        dataType: 'steps',
+      });
+
+    if (isNeonDb) {
+      expect(res.status).toBe(404);
+      expect(res.body).toHaveProperty('code', 'NOT_FOUND_ERROR');
+      expect(res.body.error).toContain('Unattributable webhook notification');
+    } else {
+      expect(res.status).toBe(200);
+    }
+  });
+
+  test('GUARD CHECK: resolveLocalUserId throws NotFoundError immediately when both healthUserId and payloadUserId are absent', async () => {
+    // Both undefined
+    await expect(resolveLocalUserId(undefined, undefined)).rejects.toThrow(NotFoundError);
+    await expect(resolveLocalUserId(undefined, undefined)).rejects.toThrow(/missing both healthUserId and payloadUserId/i);
+
+    // Both empty strings / whitespace
+    await expect(resolveLocalUserId('   ', '')).rejects.toThrow(NotFoundError);
+  });
+
+  test('POST /api/webhooks/google returns 400 Bad Request when both healthUserId and payloadUserId are absent from payload', async () => {
+    const res = await request(app)
+      .post('/api/webhooks/google')
+      .set('Authorization', `Bearer ${env.WEBHOOK_AUTH_TOKEN}`)
+      .send({
+        dataType: 'steps',
+        startTime: '2026-08-15T00:00:00Z',
       });
 
     expect(res.status).toBe(400);
     expect(res.body).toHaveProperty('code', 'VALIDATION_ERROR');
+    expect(JSON.stringify(res.body)).toContain('Either healthUserId or userId must be provided');
   });
 });

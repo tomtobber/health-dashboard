@@ -1,4 +1,4 @@
-import { db as defaultDb } from '../db';
+﻿import { db as defaultDb } from '../db';
 import { connectedAccounts } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { encryptToken } from './cryptoService';
@@ -12,9 +12,29 @@ export async function upsertConnectedAccount(
   accessToken: string,
   refreshToken: string,
   scopes: string[],
-  dbInstance: NodePgDatabase<typeof schema> = defaultDb,
-  onBeforeCommit?: (tx: unknown) => Promise<void> | void
+  healthUserIdOrDb?: string | NodePgDatabase<typeof schema>,
+  dbInstanceOrHook?: NodePgDatabase<typeof schema> | ((tx: unknown) => Promise<void> | void),
+  onBeforeCommitHook?: (tx: unknown) => Promise<void> | void
 ): Promise<void> {
+  let healthUserId: string | undefined;
+  let dbInstance: NodePgDatabase<typeof schema> = defaultDb;
+  let onBeforeCommit: ((tx: unknown) => Promise<void> | void) | undefined;
+
+  if (typeof healthUserIdOrDb === 'string') {
+    healthUserId = healthUserIdOrDb;
+    if (dbInstanceOrHook && typeof dbInstanceOrHook === 'object') {
+      dbInstance = dbInstanceOrHook as NodePgDatabase<typeof schema>;
+    }
+    if (typeof onBeforeCommitHook === 'function') {
+      onBeforeCommit = onBeforeCommitHook;
+    }
+  } else if (healthUserIdOrDb && typeof healthUserIdOrDb === 'object') {
+    dbInstance = healthUserIdOrDb as NodePgDatabase<typeof schema>;
+    if (typeof dbInstanceOrHook === 'function') {
+      onBeforeCommit = dbInstanceOrHook as (tx: unknown) => Promise<void> | void;
+    }
+  }
+
   const encryptedAccessToken = encryptToken(accessToken);
   const encryptedRefreshToken = encryptToken(refreshToken);
 
@@ -32,6 +52,7 @@ export async function upsertConnectedAccount(
             accessToken: encryptedAccessToken,
             refreshToken: encryptedRefreshToken,
             scopes: JSON.stringify(scopes),
+            healthUserId: healthUserId || existing[0].healthUserId,
             status: 'active',
             updatedAt: new Date(),
           })
@@ -40,6 +61,7 @@ export async function upsertConnectedAccount(
         await tx.insert(connectedAccounts).values({
           userId,
           provider,
+          healthUserId,
           accessToken: encryptedAccessToken,
           refreshToken: encryptedRefreshToken,
           scopes: JSON.stringify(scopes),
@@ -59,6 +81,7 @@ export async function upsertConnectedAccount(
         operation: 'upsertConnectedAccount',
         userId,
         provider,
+        healthUserId,
       },
       dbErr
     );

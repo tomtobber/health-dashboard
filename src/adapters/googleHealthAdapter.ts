@@ -1,4 +1,5 @@
 ﻿import { z } from 'zod';
+import jwt from 'jsonwebtoken';
 import { ProviderAdapter, OAuthTokens, SyncParams, SyncResult, NormalizedMetricEntry, ProjectSubscriberResult } from './baseAdapter';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 import { env } from '../config/env';
@@ -11,6 +12,7 @@ const googleTokenResponseSchema = z.object({
   expires_in: z.number().optional(),
   scope: z.string().optional(),
   token_type: z.string().optional(),
+  id_token: z.string().optional(),
 });
 
 // Google Health API 14-day maximum query window restriction list (others support up to 90 days)
@@ -124,6 +126,7 @@ export class GoogleHealthAdapter implements ProviderAdapter {
         refreshToken: 'mock_refresh_token_' + code,
         expiresIn: 3600,
         scopes: GoogleHealthAdapter.SCOPES,
+        healthUserId: 'mock_health_user_' + code,
       };
     }
 
@@ -160,11 +163,52 @@ export class GoogleHealthAdapter implements ProviderAdapter {
     }
 
     const data = parseResult.data;
+    let healthUserId: string | undefined;
+
+    if (data.id_token) {
+      try {
+        const decoded = jwt.decode(data.id_token) as { sub?: string };
+        if (decoded && typeof decoded.sub === 'string') {
+          healthUserId = decoded.sub;
+        }
+      } catch (err: unknown) {
+        logger.warn('Failed to decode Google id_token for sub claim', {
+          operation: 'authenticate:decodeIdToken',
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // Fallback: If id_token sub is missing, fetch userinfo from Google
+    if (!healthUserId && data.access_token) {
+      try {
+        const userinfoRes = await fetchWithTimeout('https://www.googleapis.com/oauth2/v3/userinfo', {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${data.access_token}` },
+          serviceName: 'GoogleUserinfo',
+          timeoutMs: 5000,
+          retries: 1,
+        });
+        if (userinfoRes.ok) {
+          const userinfoJson: unknown = await userinfoRes.json();
+          if (typeof userinfoJson === 'object' && userinfoJson !== null && 'sub' in userinfoJson) {
+            healthUserId = String((userinfoJson as { sub: unknown }).sub);
+          }
+        }
+      } catch (uiErr: unknown) {
+        logger.warn('Failed to query userinfo for Google sub identifier', {
+          operation: 'authenticate:userinfo',
+          error: uiErr instanceof Error ? uiErr.message : String(uiErr),
+        });
+      }
+    }
+
     return {
       accessToken: data.access_token,
       refreshToken: data.refresh_token || '',
       expiresIn: data.expires_in,
       scopes: data.scope ? data.scope.split(' ') : GoogleHealthAdapter.SCOPES,
+      healthUserId,
     };
   }
 

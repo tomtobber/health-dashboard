@@ -6,9 +6,11 @@ import { logger } from '../utils/logger';
 import { AuthenticationError, ValidationError, NotFoundError } from '../errors/AppError';
 import { safeTimingCompare } from '../services/cryptoService';
 import { env } from '../config/env';
-import { db } from '../db';
+import { db as defaultDb } from '../db';
 import { connectedAccounts } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, and, or } from 'drizzle-orm';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import type * as schema from '../db/schema';
 
 export const webhookRouter = Router();
 
@@ -23,9 +25,9 @@ const webhookPayloadSchema = z.object({
   endTime: z.string().optional(),
   operation: z.string().optional(),
   clientProvidedSubscriptionName: z.string().optional(),
-}).refine(data => data.healthUserId || data.userId, {
+}).refine(data => Boolean(data.healthUserId?.trim() || data.userId?.trim()), {
   message: 'Either healthUserId or userId must be provided in webhook notification payload',
-}).refine(data => data.dataType || data.metricType, {
+}).refine(data => Boolean(data.dataType?.trim() || data.metricType?.trim()), {
   message: 'Either dataType or metricType must be provided in webhook notification payload',
 });
 
@@ -50,49 +52,68 @@ function authenticateWebhookRequest(req: Request): void {
 }
 
 /**
- * Resolves the local user_id from Google Health webhook payload.
+ * Resolves the exact local user_id from Google Health webhook payload.
+ * Strictly queries connected_accounts matching healthUserId or userId.
+ * NEVER guesses or falls back to an arbitrary active account.
+ * Runs identically in all environments without branching on DATABASE_URL.
  */
-async function resolveLocalUserId(payloadUserId?: string, healthUserId?: string): Promise<string> {
-  const isNeonDb = process.env.NODE_ENV !== 'test' || Boolean(process.env.DATABASE_URL?.includes('neon.tech'));
+export async function resolveLocalUserId(
+  payloadUserId?: string,
+  healthUserId?: string,
+  dbInstance: NodePgDatabase<typeof schema> = defaultDb
+): Promise<string> {
+  const trimmedHealthId = healthUserId?.trim();
+  const trimmedPayloadId = payloadUserId?.trim();
 
-  if (!isNeonDb) {
-    return payloadUserId || healthUserId || 'test_user_id';
+  // 1. Mandatory Guard: If neither identifier is present, reject immediately before DB query
+  if (!trimmedHealthId && !trimmedPayloadId) {
+    logger.warn('Unattributable webhook notification discarded: missing both healthUserId and payloadUserId', {
+      operation: 'resolveLocalUserId',
+    });
+    throw new NotFoundError('Unattributable webhook notification: missing both healthUserId and payloadUserId', {
+      operation: 'resolveLocalUserId',
+    });
   }
 
-  // 1. If payload contains direct local user UUID, verify it exists
-  if (payloadUserId) {
-    const [acc] = await db
-      .select()
-      .from(connectedAccounts)
-      .where(eq(connectedAccounts.userId, payloadUserId));
-    if (acc) return acc.userId;
+  // 2. Build exact lookup conditions
+  const conditions = [];
+  if (trimmedHealthId) {
+    conditions.push(eq(connectedAccounts.healthUserId, trimmedHealthId));
+  }
+  if (trimmedPayloadId) {
+    conditions.push(eq(connectedAccounts.userId, trimmedPayloadId));
   }
 
-  // 2. Query active connected accounts for google_health
-  const activeAccounts = await db
-    .select()
+  const [account] = await dbInstance
+    .select({
+      userId: connectedAccounts.userId,
+      status: connectedAccounts.status,
+      healthUserId: connectedAccounts.healthUserId,
+    })
     .from(connectedAccounts)
-    .where(eq(connectedAccounts.status, 'active'));
+    .where(
+      and(
+        eq(connectedAccounts.status, 'active'),
+        eq(connectedAccounts.provider, 'google_health'),
+        or(...conditions)
+      )
+    )
+    .limit(1);
 
-  if (activeAccounts.length === 1) {
-    // For single-user / small-deployment, attribute to the active Google Health connected user
-    return activeAccounts[0].userId;
+  if (!account) {
+    logger.warn('Unattributable webhook notification discarded: no active connected account matches healthUserId or userId', {
+      operation: 'resolveLocalUserId',
+      healthUserId: trimmedHealthId,
+      payloadUserId: trimmedPayloadId,
+    });
+    throw new NotFoundError('Unattributable webhook notification: no matching active connected account found', {
+      operation: 'resolveLocalUserId',
+      healthUserId: trimmedHealthId,
+      payloadUserId: trimmedPayloadId,
+    });
   }
 
-  if (activeAccounts.length > 1 && payloadUserId) {
-    const matched = activeAccounts.find(a => a.userId === payloadUserId);
-    if (matched) return matched.userId;
-  }
-
-  if (activeAccounts.length > 0) {
-    return activeAccounts[0].userId;
-  }
-
-  throw new NotFoundError('No active connected account found to attribute incoming webhook notification', {
-    operation: 'resolveLocalUserId',
-    payloadUserId,
-    healthUserId,
-  });
+  return account.userId;
 }
 
 // 1. Google Webhook Challenge Verification (GET)
@@ -131,6 +152,7 @@ webhookRouter.post(
     const syncStart = rawStart ? new Date(rawStart) : new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const syncEnd = rawEnd ? new Date(rawEnd) : now;
 
+    // Strict exact attribution (throws NotFoundError if unmatched; discarded)
     const localUserId = await resolveLocalUserId(payloadUserId, healthUserId);
 
     logger.info('Received and authenticated Google Health webhook notification', {

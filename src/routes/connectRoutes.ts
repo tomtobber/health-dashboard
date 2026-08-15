@@ -66,6 +66,7 @@ connectRouter.get(
         message: 'Google Health account successfully connected',
         provider: 'google_health',
         userId: statePayload.userId,
+        healthUserId: tokens.healthUserId,
         status: 'active',
         scopes: tokens.scopes,
       });
@@ -76,7 +77,8 @@ connectRouter.get(
       'google_health',
       tokens.accessToken,
       tokens.refreshToken,
-      tokens.scopes
+      tokens.scopes,
+      tokens.healthUserId
     );
 
     // Trigger initial 1-year historical backfill asynchronously
@@ -85,12 +87,14 @@ connectRouter.get(
     logger.info('Google Health account successfully connected and backfill started', {
       operation: 'googleCallback',
       userId: statePayload.userId,
+      healthUserId: tokens.healthUserId,
     });
 
     return res.json({
       message: 'Google Health account successfully connected',
       provider: 'google_health',
       userId: statePayload.userId,
+      healthUserId: tokens.healthUserId,
       status: 'active',
       scopes: tokens.scopes,
     });
@@ -112,13 +116,14 @@ connectRouter.get(
       });
     }
 
-    let accounts: { provider: string; status: string; scopes: string; updatedAt: Date }[];
+    let accounts: { provider: string; status: string; scopes: string; healthUserId: string | null; updatedAt: Date }[];
     try {
       accounts = await db
         .select({
           provider: connectedAccounts.provider,
           status: connectedAccounts.status,
           scopes: connectedAccounts.scopes,
+          healthUserId: connectedAccounts.healthUserId,
           updatedAt: connectedAccounts.updatedAt,
         })
         .from(connectedAccounts)

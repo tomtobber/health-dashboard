@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeAll, afterAll } from '@jest/globals';
+﻿import { describe, test, expect, beforeAll, afterAll } from '@jest/globals';
 import { PostgreSqlContainer, StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool } from 'pg';
 import { drizzle, NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -40,6 +40,7 @@ describe('upsertConnectedAccount Real PostgreSQL Transaction & Rollback Integrat
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         provider TEXT NOT NULL,
+        health_user_id TEXT,
         access_token TEXT NOT NULL,
         refresh_token TEXT NOT NULL,
         scopes TEXT NOT NULL,
@@ -57,7 +58,7 @@ describe('upsertConnectedAccount Real PostgreSQL Transaction & Rollback Integrat
     if (container) {
       await container.stop();
     }
-  }, 30000);
+  });
 
   test('INSERT branch: Real PostgreSQL constraint violation forces transaction rollback, leaving 0 records', async () => {
     const [testUser] = await testDb
@@ -124,8 +125,8 @@ describe('upsertConnectedAccount Real PostgreSQL Transaction & Rollback Integrat
 
     await expect(failingUpdatePromise).rejects.toThrow(DatabaseError);
 
-    const finalAccounts = await testDb.select().from(connectedAccounts).where(eq(connectedAccounts.userId, testUser.id));
-    expect(finalAccounts).toHaveLength(1);
-    expect(finalAccounts[0].accessToken).toBe(originalAccessToken);
+    const remainingAccounts = await testDb.select().from(connectedAccounts).where(eq(connectedAccounts.userId, testUser.id));
+    expect(remainingAccounts).toHaveLength(1);
+    expect(remainingAccounts[0].accessToken).toBe(originalAccessToken);
   });
 });

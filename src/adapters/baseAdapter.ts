@@ -3,6 +3,7 @@
   refreshToken: string;
   expiresIn?: number;
   scopes: string[];
+  healthUserId?: string;
 }
 
 export interface SyncParams {
