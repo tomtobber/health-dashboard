@@ -68,7 +68,7 @@ describe('Webhook Routes & Exact Attribution (Official Google Health API Spec)',
     }
   });
 
-  test('POST verification probe with valid Authorization header responds 204 No Content', async () => {
+  test('POST verification probe with valid Authorization header responds 200 OK', async () => {
     const res = await request(app)
       .post('/api/webhooks/google')
       .set('Authorization', `Bearer ${env.WEBHOOK_AUTH_TOKEN}`)
@@ -76,7 +76,7 @@ describe('Webhook Routes & Exact Attribution (Official Google Health API Spec)',
         type: 'verification',
       });
 
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(200);
   });
 
   test('POST verification probe WITHOUT Authorization header fails with 401 Unauthorized', async () => {

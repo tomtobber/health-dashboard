@@ -132,10 +132,10 @@ export async function resolveLocalUserId(
  * POST /api/webhooks/google
  * 
  * Handles:
- * 1. Subscription verification probes ({"type":"verification"})
- * 2. Real Google Health API webhook notifications ({"data": [...]})
+ * 1. Subscription verification probes ({"type":"verification"}) -> responds 200 OK
+ * 2. Real Google Health API webhook notifications ({"data": [...]}) -> responds 204 No Content
  * 
- * Responds with HTTP 204 No Content immediately, executing synchronization asynchronously.
+ * Executes data synchronization asynchronously.
  */
 webhookRouter.post(
   '/google',
@@ -154,12 +154,12 @@ webhookRouter.post(
 
     const payload = parseResult.data;
 
-    // 3. Handle verification probe from Google Health API
+    // 3. Handle verification probe from Google Health API (Google requires 200 or 201 response)
     if ('type' in payload) {
       logger.info('Google Health webhook subscription verification probe received and authorized', {
         operation: 'googleWebhookVerificationProbe',
       });
-      return res.status(204).end();
+      return res.status(200).end();
     }
 
     // 4. Handle real notification data payload
@@ -204,7 +204,7 @@ webhookRouter.post(
       });
     }
 
-    // 5. Google Health Webhooks spec requires immediate 204 No Content
+    // 5. Google Health Webhooks spec requires immediate 204 No Content for real data notifications
     return res.status(204).end();
   })
 );

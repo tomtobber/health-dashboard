@@ -120,17 +120,36 @@ export class GoogleHealthAdapter implements ProviderAdapter {
   }
 
   /**
-   * Queries the official Google Health API users.getIdentity endpoint to retrieve healthUserId.
+   * Queries the official Google Health API users.getIdentity endpoint (GET /v4/users/me/identity)
+   * to retrieve the official healthUserId.
    */
   public static async fetchUserIdentity(accessToken: string): Promise<string | undefined> {
     try {
-      const response = await fetchWithTimeout('https://health.googleapis.com/v4/users/me:getIdentity', {
+      // 1. Primary REST resource path: GET https://health.googleapis.com/v4/users/me/identity
+      let response = await fetchWithTimeout('https://health.googleapis.com/v4/users/me/identity', {
         method: 'GET',
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/json',
+        },
         serviceName: 'GoogleHealthGetIdentity',
         timeoutMs: 5000,
         retries: 1,
       });
+
+      // 2. Fallback to colon notation if 404
+      if (response.status === 404) {
+        response = await fetchWithTimeout('https://health.googleapis.com/v4/users/me:getIdentity', {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: 'application/json',
+          },
+          serviceName: 'GoogleHealthGetIdentityColon',
+          timeoutMs: 5000,
+          retries: 1,
+        });
+      }
 
       if (response.ok) {
         const body: unknown = await response.json();
