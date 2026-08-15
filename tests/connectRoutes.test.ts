@@ -57,6 +57,9 @@ describe('Connect Routes API (Google OAuth)', () => {
     expect(res.body.authUrl).toContain('https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgooglehealth.health_metrics_and_measurements.readonly');
     expect(res.body.authUrl).toContain('https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgooglehealth.sleep.readonly');
     expect(res.body.authUrl).toContain('https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgooglehealth.profile.readonly');
+    // Ensure incremental authorization / include_granted_scopes is NOT enabled to prevent legacy fitness.* scope pollution
+    expect(res.body.authUrl).not.toContain('include_granted_scopes');
+    expect(res.body.authUrl).not.toContain('auth%2Ffitness.');
   });
 
   test('GET /api/connect/google/callback fails with 400 Bad Request on invalid HMAC state', async () => {
