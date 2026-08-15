@@ -2,7 +2,7 @@
 import { connectedAccounts, syncRuns } from '../db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { executeSync } from './syncService';
-import { checkAllSubscriptionsHealth } from './subscriptionHealthService';
+import { checkProjectSubscriberHealth } from './subscriptionHealthService';
 import { POLLING_ONLY_METRICS, WEBHOOK_SUPPORTED_METRICS } from '../adapters/googleHealthAdapter';
 import { logger } from '../utils/logger';
 
@@ -133,14 +133,14 @@ export async function evaluateAndRunDueSyncs(options?: {
       }
     }
 
-    // 3. Subscription Health Checks
+    // 3. Project Subscriber Health Check
     try {
-      await checkAllSubscriptionsHealth();
+      await checkProjectSubscriberHealth();
       summary.healthChecksExecuted += 1;
     } catch (err: unknown) {
-      const errMsg = `Subscription health checks failed: ${err instanceof Error ? err.message : String(err)}`;
+      const errMsg = `Project subscriber health check failed: ${err instanceof Error ? err.message : String(err)}`;
       summary.errors.push(errMsg);
-      logger.error('Due-check subscription health check failed', { operation: 'evaluateAndRunDueSyncs:subscriptionHealth', error: errMsg });
+      logger.error('Due-check subscriber health check failed', { operation: 'evaluateAndRunDueSyncs:subscriptionHealth', error: errMsg });
     }
 
     logger.info('Due-check scheduled evaluation completed', {
@@ -149,10 +149,10 @@ export async function evaluateAndRunDueSyncs(options?: {
     });
 
     return summary;
-  } catch (outerErr: unknown) {
-    const errMsg = outerErr instanceof Error ? outerErr.message : String(outerErr);
-    summary.errors.push(errMsg);
-    logger.error('Outer due-check evaluation failed', { operation: 'evaluateAndRunDueSyncs:outer', error: errMsg });
+  } catch (err: unknown) {
+    const fatalErrMsg = `Due-check fatal evaluation error: ${err instanceof Error ? err.message : String(err)}`;
+    summary.errors.push(fatalErrMsg);
+    logger.error('Due-check fatal error', { operation: 'evaluateAndRunDueSyncs', error: fatalErrMsg });
     return summary;
   }
 }

@@ -1,5 +1,5 @@
 ﻿import { z } from 'zod';
-import { ProviderAdapter, OAuthTokens, SyncParams, SyncResult, NormalizedMetricEntry, SubscriptionHealthResult } from './baseAdapter';
+import { ProviderAdapter, OAuthTokens, SyncParams, SyncResult, NormalizedMetricEntry, ProjectSubscriberResult } from './baseAdapter';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 import { env } from '../config/env';
 import { ExternalServiceError, ValidationError } from '../errors/AppError';
@@ -224,232 +224,106 @@ export class GoogleHealthAdapter implements ProviderAdapter {
     };
   }
 
-  public async createSubscription(
-    publicWebhookUrl: string,
-    accessToken: string,
-    authorizationToken: string = env.WEBHOOK_AUTH_TOKEN
-  ): Promise<SubscriptionHealthResult> {
-    if (env.NODE_ENV === 'test' || !publicWebhookUrl || publicWebhookUrl.includes('localhost') || accessToken.startsWith('mock_')) {
-      logger.info('Skipping live Google Health subscription in test/localhost environment', {
-        operation: 'createSubscription',
-        publicWebhookUrl,
-      });
+  /**
+   * Project-level helper: Creates or updates the single Google Cloud Project subscriber.
+   * Configures subscriptionCreatePolicy: AUTOMATIC so all consenting users route dynamically.
+   */
+  public static async createOrUpdateProjectSubscriber(options: {
+    projectId: string;
+    subscriberId: string;
+    webhookUrl: string;
+    webhookAuthToken: string;
+    gcpAuthToken: string;
+  }): Promise<ProjectSubscriberResult> {
+    const { projectId, subscriberId, webhookUrl, webhookAuthToken, gcpAuthToken } = options;
+
+    if (env.NODE_ENV === 'test' || gcpAuthToken.startsWith('mock_')) {
       return {
         active: true,
-        subscriptionId: 'mock_sub_' + Date.now(),
+        subscriberId,
+        endpointUri: webhookUrl,
       };
     }
 
+    const subscriberConfigs = WEBHOOK_SUPPORTED_METRICS.map((dataType) => ({
+      dataType,
+      subscriptionCreatePolicy: 'AUTOMATIC',
+    }));
+
+    const subscriberPayload = {
+      endpointUri: webhookUrl,
+      endpointAuthorization: {
+        authorizationToken: webhookAuthToken,
+      },
+      subscriberConfigs,
+    };
+
     try {
-      const response = await fetchWithTimeout('https://www.googleapis.com/googlehealth/v1/subscribers', {
+      // 1. Try to create new subscriber under project
+      const createUrl = `https://health.googleapis.com/v4/projects/${projectId}/subscribers?subscriberId=${subscriberId}`;
+      const createResponse = await fetchWithTimeout(createUrl, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${accessToken}`,
+          Authorization: `Bearer ${gcpAuthToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          endpoint: publicWebhookUrl,
-          endpointAuthorization: {
-            authorization_token: authorizationToken,
-          },
-          metricTypes: WEBHOOK_SUPPORTED_METRICS,
-        }),
-        serviceName: 'GoogleHealthSubscription',
-        timeoutMs: 8000,
-        retries: 2,
+        body: JSON.stringify(subscriberPayload),
+        serviceName: 'GoogleHealthProjectSubscriberCreate',
+        timeoutMs: 10000,
+        retries: 1,
       });
 
-      // If subscriber already exists (409 Conflict), seamlessly patch with full updated metricTypes
-      if (response.status === 409) {
-        logger.info('Google Health subscriber already exists (409); patching subscriber with latest metricTypes', {
-          operation: 'createSubscription:fallbackPatch',
-        });
-        return this.updateSubscription(publicWebhookUrl, accessToken, authorizationToken);
-      }
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        logger.warn('Google Health subscription creation returned non-200', {
-          operation: 'createSubscription',
-          status: response.status,
-          error: errorText,
-        });
+      if (createResponse.ok) {
         return {
-          active: false,
-          error: `HTTP ${response.status}: ${errorText}`,
+          active: true,
+          subscriberId,
+          endpointUri: webhookUrl,
         };
       }
 
-      const resBody: unknown = await response.json();
-      const subId = typeof resBody === 'object' && resBody !== null && 'id' in resBody
-        ? String((resBody as { id: unknown }).id)
-        : 'sub_' + Date.now();
-
-      return {
-        active: true,
-        subscriptionId: subId,
-      };
-    } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      logger.warn('Failed to create Google Health subscription', {
-        operation: 'createSubscription',
-        error: errMsg,
-      });
-      return {
-        active: false,
-        error: errMsg,
-      };
-    }
-  }
-
-  public async updateSubscription(
-    publicWebhookUrl: string,
-    accessToken: string,
-    authorizationToken: string = env.WEBHOOK_AUTH_TOKEN,
-    subscriptionId?: string
-  ): Promise<SubscriptionHealthResult> {
-    if (env.NODE_ENV === 'test' || !publicWebhookUrl || publicWebhookUrl.includes('localhost') || accessToken.startsWith('mock_')) {
-      logger.info('Skipping live Google Health subscription update in test/localhost environment', {
-        operation: 'updateSubscription',
-        publicWebhookUrl,
-      });
-      return {
-        active: true,
-        subscriptionId: subscriptionId || 'mock_sub_updated_' + Date.now(),
-      };
-    }
-
-    try {
-      const targetId = subscriptionId || 'self';
-      const response = await fetchWithTimeout(
-        `https://www.googleapis.com/googlehealth/v1/subscribers/${targetId}?updateMask=endpoint,endpointAuthorization,metricTypes`,
-        {
+      // If subscriber already exists (409 Conflict), issue PATCH to update configuration
+      if (createResponse.status === 409) {
+        const patchUrl = `https://health.googleapis.com/v4/projects/${projectId}/subscribers/${subscriberId}?updateMask=endpointUri,endpointAuthorization,subscriberConfigs`;
+        const patchResponse = await fetchWithTimeout(patchUrl, {
           method: 'PATCH',
           headers: {
-            Authorization: `Bearer ${accessToken}`,
+            Authorization: `Bearer ${gcpAuthToken}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            endpoint: publicWebhookUrl,
-            endpointAuthorization: {
-              authorization_token: authorizationToken,
-            },
-            metricTypes: WEBHOOK_SUPPORTED_METRICS,
-          }),
-          serviceName: 'GoogleHealthSubscriptionPatch',
-          timeoutMs: 8000,
-          retries: 2,
+          body: JSON.stringify(subscriberPayload),
+          serviceName: 'GoogleHealthProjectSubscriberPatch',
+          timeoutMs: 10000,
+          retries: 1,
+        });
+
+        if (patchResponse.ok) {
+          return {
+            active: true,
+            subscriberId,
+            endpointUri: webhookUrl,
+          };
         }
-      );
 
-      // If subscriber does not exist yet (404), fall back to createSubscription
-      if (response.status === 404) {
-        logger.info('Subscriber not found on PATCH (404); registering fresh subscriber', {
-          operation: 'updateSubscription:fallbackCreate',
-        });
-        return this.createSubscription(publicWebhookUrl, accessToken, authorizationToken);
-      }
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        logger.warn('Google Health subscription update returned non-200', {
-          operation: 'updateSubscription',
-          status: response.status,
-          error: errorText,
-        });
+        const patchErr = await patchResponse.text();
         return {
           active: false,
-          error: `HTTP ${response.status}: ${errorText}`,
+          subscriberId,
+          error: `Failed to update existing project subscriber: HTTP ${patchResponse.status} ${patchErr}`,
         };
       }
 
-      const resBody: unknown = await response.json();
-      const subId = typeof resBody === 'object' && resBody !== null && 'id' in resBody
-        ? String((resBody as { id: unknown }).id)
-        : targetId;
-
+      const createErr = await createResponse.text();
       return {
-        active: true,
-        subscriptionId: subId,
+        active: false,
+        subscriberId,
+        error: `Failed to create project subscriber: HTTP ${createResponse.status} ${createErr}`,
       };
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      logger.warn('Failed to update Google Health subscription', {
-        operation: 'updateSubscription',
+      return {
+        active: false,
+        subscriberId,
         error: errMsg,
-      });
-      return {
-        active: false,
-        error: errMsg,
-      };
-    }
-  }
-
-  public async deleteSubscription(
-    subscriptionId?: string,
-    accessToken?: string
-  ): Promise<SubscriptionHealthResult> {
-    if (env.NODE_ENV === 'test' || !accessToken || accessToken.startsWith('mock_')) {
-      return { active: true, subscriptionId };
-    }
-
-    try {
-      const targetId = subscriptionId || 'self';
-      const response = await fetchWithTimeout(`https://www.googleapis.com/googlehealth/v1/subscribers/${targetId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${accessToken}` },
-        serviceName: 'GoogleHealthSubscriptionDelete',
-        timeoutMs: 8000,
-        retries: 1,
-      });
-
-      if (!response.ok && response.status !== 404) {
-        const errorText = await response.text();
-        return {
-          active: false,
-          subscriptionId,
-          error: `Subscription deletion returned status ${response.status}: ${errorText}`,
-        };
-      }
-
-      return { active: true, subscriptionId };
-    } catch (err: unknown) {
-      return {
-        active: false,
-        subscriptionId,
-        error: err instanceof Error ? err.message : String(err),
-      };
-    }
-  }
-
-  public async checkSubscriptionHealth(subscriptionId?: string, accessToken?: string): Promise<SubscriptionHealthResult> {
-    if (env.NODE_ENV === 'test' || !subscriptionId || subscriptionId.startsWith('mock_') || !accessToken || accessToken.startsWith('mock_')) {
-      return { active: true, subscriptionId };
-    }
-
-    try {
-      const response = await fetchWithTimeout(`https://www.googleapis.com/googlehealth/v1/subscribers/${subscriptionId}`, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${accessToken}` },
-        serviceName: 'GoogleHealthSubHealth',
-        timeoutMs: 8000,
-        retries: 1,
-      });
-
-      if (!response.ok) {
-        return {
-          active: false,
-          subscriptionId,
-          error: `Subscription verification returned status ${response.status}`,
-        };
-      }
-
-      return { active: true, subscriptionId };
-    } catch (err: unknown) {
-      return {
-        active: false,
-        subscriptionId,
-        error: err instanceof Error ? err.message : String(err),
       };
     }
   }

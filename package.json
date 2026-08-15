@@ -9,6 +9,7 @@
     "lint": "eslint . --max-warnings=0",
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
+    "setup:subscriber": "tsx src/scripts/ensureProjectSubscriber.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "test": "jest --runInBand"

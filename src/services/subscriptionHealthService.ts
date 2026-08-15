@@ -1,93 +1,49 @@
-﻿import { db } from '../db';
-import { connectedAccounts } from '../db/schema';
-import { eq } from 'drizzle-orm';
-import { GoogleHealthAdapter } from '../adapters/googleHealthAdapter';
-import { decryptToken } from './cryptoService';
+﻿import { GoogleHealthAdapter } from '../adapters/googleHealthAdapter';
 import { env } from '../config/env';
 import { logger } from '../utils/logger';
 
-export interface SubscriptionStatus {
-  subscriptionId: string;
-  status: 'active' | 'disabled' | 'expired';
-  lastVerifiedAt: Date;
+export interface ProjectSubscriberStatus {
+  subscriberId: string;
+  active: boolean;
+  endpointUri?: string;
+  lastCheckedAt: Date;
   error?: string;
 }
 
-export async function checkAndRenewWebhookSubscriptions(userId: string): Promise<SubscriptionStatus> {
-  const adapter = new GoogleHealthAdapter();
+/**
+ * Checks or verifies the project-level Google Health subscriber.
+ */
+export async function checkProjectSubscriberHealth(gcpAuthToken?: string): Promise<ProjectSubscriberStatus> {
+  const isTest = env.NODE_ENV === 'test' || !gcpAuthToken || gcpAuthToken.startsWith('mock_');
 
-  if (process.env.NODE_ENV === 'test' && !process.env.DATABASE_URL?.includes('neon.tech')) {
+  if (isTest) {
     return {
-      subscriptionId: 'mock_sub_' + userId,
-      status: 'active',
-      lastVerifiedAt: new Date(),
+      subscriberId: env.GOOGLE_SUBSCRIBER_ID,
+      active: true,
+      endpointUri: `${env.APP_BASE_URL}/api/webhooks/google`,
+      lastCheckedAt: new Date(),
     };
   }
 
-  const [account] = await db
-    .select()
-    .from(connectedAccounts)
-    .where(eq(connectedAccounts.userId, userId));
+  logger.info('Verifying project subscriber health in Google Health API', {
+    operation: 'checkProjectSubscriberHealth',
+    projectId: env.GOOGLE_PROJECT_ID,
+    subscriberId: env.GOOGLE_SUBSCRIBER_ID,
+  });
 
-  if (!account) {
-    return {
-      subscriptionId: 'none',
-      status: 'disabled',
-      lastVerifiedAt: new Date(),
-      error: 'No connected account found',
-    };
-  }
-
-  const decryptedAccessToken = decryptToken(account.accessToken);
-  const webhookUrl = `${env.APP_BASE_URL}/api/webhooks/google`;
-
-  // Update/renew subscription to ensure full latest WEBHOOK_SUPPORTED_METRICS coverage
-  const syncResult = await adapter.updateSubscription(webhookUrl, decryptedAccessToken);
-
-  if (!syncResult.active) {
-    logger.warn('Subscription update returned inactive status, attempting fresh create', {
-      operation: 'checkAndRenewWebhookSubscriptions:fallbackCreate',
-      userId,
-      error: syncResult.error,
-    });
-
-    const createResult = await adapter.createSubscription(webhookUrl, decryptedAccessToken);
-    return {
-      subscriptionId: createResult.subscriptionId || 'renewed_sub',
-      status: createResult.active ? 'active' : 'disabled',
-      lastVerifiedAt: new Date(),
-      error: createResult.error,
-    };
-  }
+  const result = await GoogleHealthAdapter.createOrUpdateProjectSubscriber({
+    projectId: env.GOOGLE_PROJECT_ID,
+    subscriberId: env.GOOGLE_SUBSCRIBER_ID,
+    webhookUrl: `${env.APP_BASE_URL}/api/webhooks/google`,
+    webhookAuthToken: env.WEBHOOK_AUTH_TOKEN,
+    gcpAuthToken,
+  });
 
   return {
-    subscriptionId: syncResult.subscriptionId || 'active_sub',
-    status: 'active',
-    lastVerifiedAt: new Date(),
+    subscriberId: result.subscriberId,
+    active: result.active,
+    endpointUri: result.endpointUri,
+    lastCheckedAt: new Date(),
+    error: result.error,
   };
-}
-
-export async function checkAllSubscriptionsHealth(): Promise<SubscriptionStatus[]> {
-  const isLiveDb = process.env.NODE_ENV !== 'test' || Boolean(process.env.DATABASE_URL?.includes('neon.tech'));
-
-  if (!isLiveDb) {
-    return [{
-      subscriptionId: 'mock_sub_all',
-      status: 'active',
-      lastVerifiedAt: new Date(),
-    }];
-  }
-
-  const accounts = await db
-    .select()
-    .from(connectedAccounts)
-    .where(eq(connectedAccounts.status, 'active'));
-
-  const results: SubscriptionStatus[] = [];
-  for (const acc of accounts) {
-    const status = await checkAndRenewWebhookSubscriptions(acc.userId);
-    results.push(status);
-  }
-
-  return results;
 }

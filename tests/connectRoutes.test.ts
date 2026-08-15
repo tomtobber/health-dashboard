@@ -118,13 +118,12 @@ describe('Connect Routes API (Google OAuth)', () => {
     expect(callbackRes.body.scopes).toEqual(GoogleHealthAdapter.SCOPES);
   });
 
-  test('POST /api/connect/google/sync-subscription updates existing webhook subscription to latest metric types', async () => {
+  test('POST /api/connect/google/disconnect marks connected account as disabled', async () => {
     const res = await request(app)
-      .post('/api/connect/google/sync-subscription')
+      .post('/api/connect/google/disconnect')
       .set('Authorization', `Bearer ${authToken}`);
 
     expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty('active', true);
-    expect(res.body.message).toContain('updated');
+    expect(res.body.message).toContain('Disconnected Google Health account successfully');
   });
 });

@@ -78,24 +78,44 @@ describe('Webhook Routes', () => {
     expect(res.body).toHaveProperty('code', 'AUTHENTICATION_ERROR');
   });
 
-  test('POST /api/webhooks/google accepts valid notification payload with valid Authorization header and returns 200 accepted', async () => {
+  test('POST /api/webhooks/google accepts valid notification payload with healthUserId and dataType', async () => {
+    const res = await request(app)
+      .post('/api/webhooks/google')
+      .set('Authorization', `Bearer ${env.WEBHOOK_AUTH_TOKEN}`)
+      .send({
+        healthUserId: 'google_health_user_123',
+        dataType: 'steps',
+        startTime: '2026-08-15T00:00:00Z',
+        endTime: '2026-08-15T01:00:00Z',
+        operation: 'UPSERT',
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('status', 'accepted');
+    expect(res.body).toHaveProperty('metricType', 'steps');
+  });
+
+  test('POST /api/webhooks/google accepts valid notification payload with local userId and metricType', async () => {
     const res = await request(app)
       .post('/api/webhooks/google')
       .set('Authorization', `Bearer ${env.WEBHOOK_AUTH_TOKEN}`)
       .send({
         userId: testUserId,
-        metricType: 'steps',
+        metricType: 'heart_rate',
       });
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('status', 'accepted');
+    expect(res.body).toHaveProperty('metricType', 'heart_rate');
   });
 
-  test('POST /api/webhooks/google returns 400 Bad Request on invalid payload missing required fields', async () => {
+  test('POST /api/webhooks/google returns 400 Bad Request on invalid payload missing user or metric identifiers', async () => {
     const res = await request(app)
       .post('/api/webhooks/google')
       .set('Authorization', `Bearer ${env.WEBHOOK_AUTH_TOKEN}`)
-      .send({});
+      .send({
+        someOtherField: 'value',
+      });
 
     expect(res.status).toBe(400);
     expect(res.body).toHaveProperty('code', 'VALIDATION_ERROR');

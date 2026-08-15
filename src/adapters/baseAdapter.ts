@@ -40,9 +40,10 @@ export interface NormalizedMetricEntry {
   rawPayload?: Record<string, unknown>;
 }
 
-export interface SubscriptionHealthResult {
+export interface ProjectSubscriberResult {
   active: boolean;
-  subscriptionId?: string;
+  subscriberId: string;
+  endpointUri?: string;
   error?: string;
 }
 
@@ -53,8 +54,4 @@ export interface ProviderAdapter {
   refreshToken(refreshToken: string): Promise<OAuthTokens>;
   sync(params: SyncParams): Promise<SyncResult>;
   mapToNormalizedSchema(rawPoint: Record<string, unknown>): NormalizedMetricEntry[];
-  createSubscription?(publicWebhookUrl: string, accessToken: string, authorizationToken?: string): Promise<SubscriptionHealthResult>;
-  updateSubscription?(publicWebhookUrl: string, accessToken: string, authorizationToken?: string, subscriptionId?: string): Promise<SubscriptionHealthResult>;
-  deleteSubscription?(subscriptionId?: string, accessToken?: string): Promise<SubscriptionHealthResult>;
-  checkSubscriptionHealth?(subscriptionId?: string, accessToken?: string): Promise<SubscriptionHealthResult>;
 }

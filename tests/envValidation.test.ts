@@ -12,6 +12,8 @@ describe('Environment Variable Startup Validation', () => {
     GOOGLE_CLIENT_ID: 'real-google-client-id.apps.googleusercontent.com',
     GOOGLE_CLIENT_SECRET: 'real-google-client-secret-12345',
     GOOGLE_REDIRECT_URI: 'http://localhost:3000/api/connect/google/callback',
+    GOOGLE_PROJECT_ID: 'my-gcp-project-123',
+    GOOGLE_SUBSCRIBER_ID: 'health-dashboard-sub',
     APP_BASE_URL: 'http://localhost:3000',
     NODE_ENV: 'development',
   };
@@ -21,6 +23,7 @@ describe('Environment Variable Startup Validation', () => {
     expect(loaded.GOOGLE_CLIENT_ID).toBe('real-google-client-id.apps.googleusercontent.com');
     expect(loaded.GOOGLE_CLIENT_SECRET).toBe('real-google-client-secret-12345');
     expect(loaded.GOOGLE_REDIRECT_URI).toBe('http://localhost:3000/api/connect/google/callback');
+    expect(loaded.GOOGLE_SUBSCRIBER_ID).toBe('health-dashboard-sub');
     expect(loaded.CRON_SECRET).toBe('real-cron-secret-min-16-chars-long');
     expect(loaded.WEBHOOK_AUTH_TOKEN).toBe('real-webhook-auth-token-min-16-chars');
   });
@@ -75,6 +78,14 @@ describe('Environment Variable Startup Validation', () => {
       expect((err as ValidationError).message).toContain('GOOGLE_CLIENT_SECRET');
       expect((err as ValidationError).message).toContain('placeholder');
     }
+  });
+
+  test('fails when GOOGLE_SUBSCRIBER_ID has invalid format', () => {
+    const invalidSubEnv = {
+      ...baseValidEnv,
+      GOOGLE_SUBSCRIBER_ID: '123_invalid_subscriber_ID_$$$',
+    };
+    expect(() => loadEnv(invalidSubEnv)).toThrow(ValidationError);
   });
 
   test('fails when CRON_SECRET is shorter than 16 characters', () => {

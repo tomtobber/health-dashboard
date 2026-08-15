@@ -23,6 +23,11 @@ export const envSchema = z
     GOOGLE_CLIENT_ID: z.string().min(1, 'GOOGLE_CLIENT_ID is required'),
     GOOGLE_CLIENT_SECRET: z.string().min(1, 'GOOGLE_CLIENT_SECRET is required'),
     GOOGLE_REDIRECT_URI: z.string().url('GOOGLE_REDIRECT_URI must be a valid URL'),
+    GOOGLE_PROJECT_ID: z.string().default('health-dashboard-project'),
+    GOOGLE_SUBSCRIBER_ID: z
+      .string()
+      .regex(/^[a-z]([a-z0-9-]{2,34}[a-z0-9])$/, 'GOOGLE_SUBSCRIBER_ID must be 4-36 lowercase alphanumeric/hyphen chars')
+      .default('health-dashboard-sub'),
     APP_BASE_URL: z.string().default('http://localhost:3000'),
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   })
@@ -61,6 +66,8 @@ export function loadEnv(envObj: Record<string, unknown> = process.env): Env {
         GOOGLE_CLIENT_ID: 'mock-google-client-id',
         GOOGLE_CLIENT_SECRET: 'mock-google-client-secret',
         GOOGLE_REDIRECT_URI: 'http://localhost:3000/api/connect/google/callback',
+        GOOGLE_PROJECT_ID: 'health-dashboard-project',
+        GOOGLE_SUBSCRIBER_ID: 'health-dashboard-sub',
         APP_BASE_URL: 'http://localhost:3000',
         NODE_ENV: 'test',
         ...envObj,

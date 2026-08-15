@@ -6,7 +6,7 @@
     plan: free
     buildCommand: npm install && npm run build
     startCommand: npm start
-    healthCheckPath: /health
+    autoDeploy: true
     envVars:
       - key: NODE_ENV
         value: production
@@ -28,5 +28,9 @@
         sync: false
       - key: GOOGLE_REDIRECT_URI
         sync: false
+      - key: GOOGLE_PROJECT_ID
+        sync: false
+      - key: GOOGLE_SUBSCRIBER_ID
+        value: health-dashboard-sub
       - key: APP_BASE_URL
         sync: false
