@@ -13,24 +13,60 @@ const googleTokenResponseSchema = z.object({
   token_type: z.string().optional(),
 });
 
-export const METRICS_14_DAY = new Set(['heart_rate', 'active_minutes', 'total_calories', 'calories_in_zone', 'hrv', 'spo2']);
-export const WEBHOOK_SUPPORTED_METRICS = [
-  'steps',
-  'altitude',
-  'distance',
-  'floors',
-  'weight',
-  'sleep',
+// Google Health API 14-day maximum query window restriction list (others support up to 90 days)
+export const METRICS_14_DAY = new Set([
   'heart_rate',
-  'resting_heart_rate',
-  'hrv',
+  'heartRate',
   'active_minutes',
+  'activeMinutes',
+  'activeZoneMinutes',
   'total_calories',
-  'spo2',
-  'respiratory_rate',
-  'vo2_max',
+  'totalCalories',
+  'calories_in_zone',
+  'caloriesInHeartRateZone',
+]);
+
+// Official Google Health API webhook-supported subscriber metric types
+export const WEBHOOK_SUPPORTED_METRICS = [
+  'activeZoneMinutes',
+  'activityLevel',
+  'altitude',
+  'bloodGlucose',
+  'bodyFat',
+  'caloriesInHeartRateZone',
+  'dailyHeartRateVariability',
+  'dailyHeartRateZones',
+  'dailyOxygenSaturation',
+  'dailyRespiratoryRate',
+  'dailyRestingHeartRate',
+  'dailySleepTemperatureDerivations',
+  'distance',
+  'exercise',
+  'floors',
+  'heartRate',
+  'heartRateVariability',
+  'height',
+  'hydrationLog',
+  'nutritionLog',
+  'respiratoryRateSleepSummary',
+  'runVo2Max',
+  'sedentaryPeriod',
+  'sleep',
+  'steps',
+  'timeInHeartRateZone',
+  'totalCalories',
+  'weight',
 ];
-export const POLLING_ONLY_METRICS = ['blood_glucose', 'blood_pressure', 'body_temperature'];
+
+// Metrics available for read/polling that do NOT have webhook notification support
+export const POLLING_ONLY_METRICS = [
+  'vo2Max',
+  'dailyVo2Max',
+  'electrocardiogram',
+  'irregularRhythmNotification',
+  'coreBodyTemperature',
+  'bloodPressure',
+];
 
 export function splitDateRange(startDate: Date, endDate: Date, maxDays: number): { start: Date; end: Date }[] {
   const ranges: { start: Date; end: Date }[] = [];
