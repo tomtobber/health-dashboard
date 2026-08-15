@@ -22,6 +22,8 @@ env:
   GOOGLE_CLIENT_ID: mock-google-client-id
   GOOGLE_CLIENT_SECRET: mock-google-client-secret
   GOOGLE_REDIRECT_URI: http://localhost:3000/api/connect/google/callback
+  GOOGLE_PROJECT_ID: health-dashboard-project
+  GOOGLE_SUBSCRIBER_ID: health-dashboard-sub
   APP_BASE_URL: http://localhost:3000
 
 jobs:
@@ -56,6 +58,20 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: health_dashboard
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -63,6 +79,73 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run build
+      - name: Initialize PostgreSQL schema
+        run: |
+          node -e "
+            const { pool } = require('./dist/db');
+            async function init() {
+              await pool.query(\`
+                CREATE EXTENSION IF NOT EXISTS \"pgcrypto\";
+                CREATE TABLE IF NOT EXISTS users (
+                  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  email TEXT NOT NULL UNIQUE,
+                  password_hash TEXT NOT NULL,
+                  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                CREATE TABLE IF NOT EXISTS connected_accounts (
+                  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                  provider TEXT NOT NULL,
+                  health_user_id TEXT,
+                  access_token TEXT NOT NULL,
+                  refresh_token TEXT NOT NULL,
+                  scopes TEXT NOT NULL,
+                  status TEXT NOT NULL DEFAULT 'active',
+                  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                CREATE TABLE IF NOT EXISTS metric_entries (
+                  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                  provider TEXT NOT NULL,
+                  metric_type TEXT NOT NULL,
+                  external_id TEXT,
+                  start_time TIMESTAMPTZ NOT NULL,
+                  end_time TIMESTAMPTZ NOT NULL,
+                  value_numeric DOUBLE PRECISION,
+                  value_text TEXT,
+                  unit TEXT NOT NULL,
+                  source_stream TEXT NOT NULL,
+                  aggregation TEXT NOT NULL DEFAULT 'raw',
+                  raw_payload JSONB,
+                  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                  deleted_at TIMESTAMPTZ
+                );
+                CREATE TABLE IF NOT EXISTS sync_runs (
+                  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                  provider TEXT NOT NULL,
+                  metric_type TEXT,
+                  trigger TEXT NOT NULL,
+                  requested_range_start TIMESTAMPTZ,
+                  requested_range_end TIMESTAMPTZ,
+                  status TEXT NOT NULL,
+                  points_fetched INTEGER NOT NULL DEFAULT 0,
+                  points_upserted INTEGER NOT NULL DEFAULT 0,
+                  pages_fetched INTEGER NOT NULL DEFAULT 0,
+                  error TEXT,
+                  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                  completed_at TIMESTAMPTZ
+                );
+              \`);
+              console.log('PostgreSQL schema initialized successfully');
+              await pool.end();
+            }
+            init().catch(err => { console.error('DB init failed:', err); process.exit(1); });
+          "
       - run: npm test -- --ci --coverage
       - name: Upload coverage
         if: always()
