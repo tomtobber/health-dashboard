@@ -400,8 +400,12 @@ export class GoogleHealthAdapter implements ProviderAdapter {
       });
 
       const createResponseText = await createResponse.text();
+      const createHeadersObj: Record<string, string> = {};
+      createResponse.headers.forEach((val, key) => { createHeadersObj[key] = val; });
+
       console.log('\n=== GOOGLE HEALTH SUBSCRIBER RESPONSE (POST CREATE) ===');
       console.log('Status Code:', createResponse.status, createResponse.statusText);
+      console.log('Response Headers:', JSON.stringify(createHeadersObj, null, 2));
       console.log('Response Body:', createResponseText);
       console.log('=======================================================');
 
@@ -438,8 +442,12 @@ export class GoogleHealthAdapter implements ProviderAdapter {
         });
 
         const patchResponseText = await patchResponse.text();
+        const patchHeadersObj: Record<string, string> = {};
+        patchResponse.headers.forEach((val, key) => { patchHeadersObj[key] = val; });
+
         console.log('\n=== GOOGLE HEALTH SUBSCRIBER RESPONSE (PATCH UPDATE) ===');
         console.log('Status Code:', patchResponse.status, patchResponse.statusText);
+        console.log('Response Headers:', JSON.stringify(patchHeadersObj, null, 2));
         console.log('Response Body:', patchResponseText);
         console.log('=======================================================');
 

@@ -88,6 +88,16 @@ describe('Environment Variable Startup Validation', () => {
     expect(() => loadEnv(invalidSubEnv)).toThrow(ValidationError);
   });
 
+  test('fails at startup with ValidationError when WEBHOOK_AUTH_TOKEN is missing', () => {
+    const { WEBHOOK_AUTH_TOKEN: _, ...missingWebhookEnv } = baseValidEnv;
+    expect(() => loadEnv(missingWebhookEnv)).toThrow(ValidationError);
+  });
+
+  test('fails at startup with ValidationError when CRON_SECRET is missing', () => {
+    const { CRON_SECRET: _, ...missingCronEnv } = baseValidEnv;
+    expect(() => loadEnv(missingCronEnv)).toThrow(ValidationError);
+  });
+
   test('fails when CRON_SECRET is shorter than 16 characters', () => {
     const invalidCronEnv = {
       ...baseValidEnv,
