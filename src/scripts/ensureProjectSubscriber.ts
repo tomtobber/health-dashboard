@@ -1,21 +1,27 @@
-﻿import { GoogleHealthAdapter } from '../adapters/googleHealthAdapter';
+import { GoogleHealthAdapter, WEBHOOK_SUPPORTED_METRICS } from '../adapters/googleHealthAdapter';
 import { env } from '../config/env';
 import { logger } from '../utils/logger';
+
+// Bisect: Test Group A2.1 (first 3 items) + confirmed clean (altitude, steps)
+export const TEST_METRICS = WEBHOOK_SUPPORTED_METRICS;
 
 /**
  * Standalone Script: Ensure Project Subscriber Exists in Google Health API
  * 
  * Usage:
  *   GCP_AUTH_TOKEN="ya29..." npm run setup:subscriber
- * 
- * Or with custom project number/ID and Render webhook URL:
- *   GCP_AUTH_TOKEN="ya29..." GOOGLE_PROJECT_ID="104829104829" APP_BASE_URL="https://health-dashboard-85m6.onrender.com" npm run setup:subscriber
  */
 export async function runEnsureProjectSubscriber(customGcpToken?: string) {
   const gcpAuthToken = customGcpToken || process.env.GCP_AUTH_TOKEN || process.env.GOOGLE_OAUTH_TOKEN || '';
   const projectId = process.env.GOOGLE_PROJECT_NUMBER || process.env.GOOGLE_PROJECT_ID || env.GOOGLE_PROJECT_ID;
   const subscriberId = process.env.GOOGLE_SUBSCRIBER_ID || env.GOOGLE_SUBSCRIBER_ID;
   
+  // Resolve data types for bisect test
+  let dataTypes = TEST_METRICS;
+  if (process.env.TEST_DATA_TYPES) {
+    dataTypes = process.env.TEST_DATA_TYPES.split(',').map((s) => s.trim()).filter(Boolean);
+  }
+
   // Resolve public HTTPS webhook URL: prioritize WEBHOOK_URL or APP_BASE_URL env override, fallback to Render prod URL if localhost
   let rawBaseUrl = process.env.APP_BASE_URL || env.APP_BASE_URL;
   if ((!rawBaseUrl || rawBaseUrl.includes('localhost')) && gcpAuthToken && !gcpAuthToken.startsWith('mock_')) {
@@ -42,11 +48,13 @@ export async function runEnsureProjectSubscriber(customGcpToken?: string) {
     return { active: false, error: `Invalid webhook URL protocol: ${webhookUrl} (must be HTTPS)` };
   }
 
-  logger.info('Ensuring project-level subscriber with AUTOMATIC subscription policy', {
+  logger.info('Ensuring project-level subscriber with AUTOMATIC subscription policy (TEST Group A2.1)', {
     operation: 'ensureProjectSubscriberScript',
     projectId,
     subscriberId,
     webhookUrl,
+    dataTypesCount: dataTypes.length,
+    dataTypes,
   });
 
   const result = await GoogleHealthAdapter.createOrUpdateProjectSubscriber({
@@ -55,6 +63,7 @@ export async function runEnsureProjectSubscriber(customGcpToken?: string) {
     webhookUrl,
     webhookAuthToken,
     gcpAuthToken: gcpAuthToken || 'mock_token',
+    dataTypes,
   });
 
   if (result.active) {

@@ -19,44 +19,48 @@ const googleTokenResponseSchema = z.object({
 export const METRICS_14_DAY = new Set([
   'heart_rate',
   'heartRate',
+  'heart-rate',
   'active_minutes',
   'activeMinutes',
+  'active-minutes',
   'activeZoneMinutes',
+  'active-zone-minutes',
   'total_calories',
   'totalCalories',
+  'total-calories',
   'calories_in_zone',
   'caloriesInHeartRateZone',
+  'calories-in-heart-rate-zone',
 ]);
 
-// Official Google Health API webhook-supported subscriber metric types
+// Official Google Health API webhook-supported subscriber metric types (kebab-case, excluding rejected total-calories)
 export const WEBHOOK_SUPPORTED_METRICS = [
-  'activeZoneMinutes',
-  'activityLevel',
+  'active-zone-minutes',
+  'activity-level',
   'altitude',
-  'bloodGlucose',
-  'bodyFat',
-  'caloriesInHeartRateZone',
-  'dailyHeartRateVariability',
-  'dailyHeartRateZones',
-  'dailyOxygenSaturation',
-  'dailyRespiratoryRate',
-  'dailyRestingHeartRate',
-  'dailySleepTemperatureDerivations',
+  'blood-glucose',
+  'body-fat',
+  'calories-in-heart-rate-zone',
+  'daily-heart-rate-variability',
+  'daily-heart-rate-zones',
+  'daily-oxygen-saturation',
+  'daily-respiratory-rate',
+  'daily-resting-heart-rate',
+  'daily-sleep-temperature-derivations',
   'distance',
   'exercise',
   'floors',
-  'heartRate',
-  'heartRateVariability',
+  'heart-rate',
+  'heart-rate-variability',
   'height',
-  'hydrationLog',
-  'nutritionLog',
-  'respiratoryRateSleepSummary',
-  'runVo2Max',
-  'sedentaryPeriod',
+  'hydration-log',
+  'nutrition-log',
+  'respiratory-rate-sleep-summary',
+  'run-vo2-max',
+  'sedentary-period',
   'sleep',
   'steps',
-  'timeInHeartRateZone',
-  'totalCalories',
+  'time-in-heart-rate-zone',
   'weight',
 ];
 
@@ -68,6 +72,9 @@ export const POLLING_ONLY_METRICS = [
   'irregularRhythmNotification',
   'coreBodyTemperature',
   'bloodPressure',
+  'total-calories',
+  'total_calories',
+  'totalCalories',
 ];
 
 export function splitDateRange(startDate: Date, endDate: Date, maxDays: number): { start: Date; end: Date }[] {
@@ -343,8 +350,9 @@ export class GoogleHealthAdapter implements ProviderAdapter {
     webhookUrl: string;
     webhookAuthToken: string;
     gcpAuthToken: string;
+    dataTypes?: string[];
   }): Promise<ProjectSubscriberResult> {
-    const { projectId, subscriberId, webhookUrl, webhookAuthToken, gcpAuthToken } = options;
+    const { projectId, subscriberId, webhookUrl, webhookAuthToken, gcpAuthToken, dataTypes = WEBHOOK_SUPPORTED_METRICS } = options;
 
     if (env.NODE_ENV === 'test' || gcpAuthToken.startsWith('mock_')) {
       return {
@@ -363,7 +371,7 @@ export class GoogleHealthAdapter implements ProviderAdapter {
       },
       subscriberConfigs: [
         {
-          dataTypes: WEBHOOK_SUPPORTED_METRICS,
+          dataTypes,
           subscriptionCreatePolicy: 'AUTOMATIC',
         },
       ],

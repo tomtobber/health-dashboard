@@ -18,42 +18,41 @@ describe('Project-Scoped Subscriber Management', () => {
     expect(result.endpointUri).toBe('https://test.example.com/api/webhooks/google');
   });
 
-  test('WEBHOOK_SUPPORTED_METRICS matches the exact verified 28 camelCase Google Health API data types list', () => {
-    const verifiedCamelCaseMetrics = [
-      'activeZoneMinutes',
-      'activityLevel',
+  test('WEBHOOK_SUPPORTED_METRICS matches the verified kebab-case Google Health API data types list', () => {
+    const verifiedKebabCaseMetrics = [
+      'active-zone-minutes',
+      'activity-level',
       'altitude',
-      'bloodGlucose',
-      'bodyFat',
-      'caloriesInHeartRateZone',
-      'dailyHeartRateVariability',
-      'dailyHeartRateZones',
-      'dailyOxygenSaturation',
-      'dailyRespiratoryRate',
-      'dailyRestingHeartRate',
-      'dailySleepTemperatureDerivations',
+      'blood-glucose',
+      'body-fat',
+      'calories-in-heart-rate-zone',
+      'daily-heart-rate-variability',
+      'daily-heart-rate-zones',
+      'daily-oxygen-saturation',
+      'daily-respiratory-rate',
+      'daily-resting-heart-rate',
+      'daily-sleep-temperature-derivations',
       'distance',
       'exercise',
       'floors',
-      'heartRate',
-      'heartRateVariability',
+      'heart-rate',
+      'heart-rate-variability',
       'height',
-      'hydrationLog',
-      'nutritionLog',
-      'respiratoryRateSleepSummary',
-      'runVo2Max',
-      'sedentaryPeriod',
+      'hydration-log',
+      'nutrition-log',
+      'respiratory-rate-sleep-summary',
+      'run-vo2-max',
+      'sedentary-period',
       'sleep',
       'steps',
-      'timeInHeartRateZone',
-      'totalCalories',
+      'time-in-heart-rate-zone',
       'weight',
     ];
 
-    expect(WEBHOOK_SUPPORTED_METRICS).toEqual(verifiedCamelCaseMetrics);
-    expect(WEBHOOK_SUPPORTED_METRICS.length).toBe(28);
+    expect(WEBHOOK_SUPPORTED_METRICS).toEqual(verifiedKebabCaseMetrics);
+    expect(WEBHOOK_SUPPORTED_METRICS.length).toBe(27);
 
-    // Assert strictly that zero snake_case or legacy formatting exists
+    // Assert strictly that zero snake_case formatting exists
     for (const metric of WEBHOOK_SUPPORTED_METRICS) {
       expect(metric).not.toContain('_');
     }

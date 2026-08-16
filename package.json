@@ -12,7 +12,8 @@
     "setup:subscriber": "tsx src/scripts/ensureProjectSubscriber.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
-    "test": "jest --runInBand"
+    "test": "jest --runInBand",
+    "test:subscriber-types": "tsx src/scripts/testAllDataTypes.ts"
   },
   "keywords": [],
   "author": "",
