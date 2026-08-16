@@ -376,6 +376,7 @@ export class GoogleHealthAdapter implements ProviderAdapter {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${gcpAuthToken}`,
+          'X-Goog-User-Project': projectId,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(subscriberPayload),
@@ -399,6 +400,7 @@ export class GoogleHealthAdapter implements ProviderAdapter {
           method: 'PATCH',
           headers: {
             Authorization: `Bearer ${gcpAuthToken}`,
+            'X-Goog-User-Project': projectId,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(subscriberPayload),
