@@ -18,13 +18,45 @@ describe('Project-Scoped Subscriber Management', () => {
     expect(result.endpointUri).toBe('https://test.example.com/api/webhooks/google');
   });
 
-  test('WEBHOOK_SUPPORTED_METRICS contains 28 verified Google Health API data types', () => {
+  test('WEBHOOK_SUPPORTED_METRICS matches the exact verified 28 camelCase Google Health API data types list', () => {
+    const verifiedCamelCaseMetrics = [
+      'activeZoneMinutes',
+      'activityLevel',
+      'altitude',
+      'bloodGlucose',
+      'bodyFat',
+      'caloriesInHeartRateZone',
+      'dailyHeartRateVariability',
+      'dailyHeartRateZones',
+      'dailyOxygenSaturation',
+      'dailyRespiratoryRate',
+      'dailyRestingHeartRate',
+      'dailySleepTemperatureDerivations',
+      'distance',
+      'exercise',
+      'floors',
+      'heartRate',
+      'heartRateVariability',
+      'height',
+      'hydrationLog',
+      'nutritionLog',
+      'respiratoryRateSleepSummary',
+      'runVo2Max',
+      'sedentaryPeriod',
+      'sleep',
+      'steps',
+      'timeInHeartRateZone',
+      'totalCalories',
+      'weight',
+    ];
+
+    expect(WEBHOOK_SUPPORTED_METRICS).toEqual(verifiedCamelCaseMetrics);
     expect(WEBHOOK_SUPPORTED_METRICS.length).toBe(28);
-    expect(WEBHOOK_SUPPORTED_METRICS).toContain('activeZoneMinutes');
-    expect(WEBHOOK_SUPPORTED_METRICS).toContain('runVo2Max');
-    expect(WEBHOOK_SUPPORTED_METRICS).toContain('totalCalories');
-    expect(WEBHOOK_SUPPORTED_METRICS).toContain('heartRate');
-    expect(WEBHOOK_SUPPORTED_METRICS).toContain('sleep');
+
+    // Assert strictly that zero snake_case or legacy formatting exists
+    for (const metric of WEBHOOK_SUPPORTED_METRICS) {
+      expect(metric).not.toContain('_');
+    }
   });
 
   test('checkProjectSubscriberHealth returns active status for project subscriber', async () => {
