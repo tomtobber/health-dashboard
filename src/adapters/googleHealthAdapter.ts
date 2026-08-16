@@ -370,8 +370,22 @@ export class GoogleHealthAdapter implements ProviderAdapter {
     };
 
     try {
-      // 1. Try to create new subscriber under project (project can be project_number or project_id)
       const createUrl = `https://health.googleapis.com/v4/projects/${projectId}/subscribers?subscriberId=${subscriberId}`;
+      const maskedAuth = gcpAuthToken ? `Bearer ${gcpAuthToken.slice(0, 10)}...[PRESENT, length=${gcpAuthToken.length}]` : '[EMPTY]';
+      const debugHeaders = {
+        Authorization: maskedAuth,
+        'X-Goog-User-Project': projectId,
+        'Content-Type': 'application/json',
+      };
+
+      console.log('\n=== GOOGLE HEALTH SUBSCRIBER OUTGOING REQUEST (POST CREATE) ===');
+      console.log('Method: POST');
+      console.log('URL:', createUrl);
+      console.log('Headers:', JSON.stringify(debugHeaders, null, 2));
+      console.log('Body:', JSON.stringify(subscriberPayload, null, 2));
+      console.log('=======================================================');
+
+      // 1. Try to create new subscriber under project (project can be project_number or project_id)
       const createResponse = await fetchWithTimeout(createUrl, {
         method: 'POST',
         headers: {
@@ -385,6 +399,12 @@ export class GoogleHealthAdapter implements ProviderAdapter {
         retries: 1,
       });
 
+      const createResponseText = await createResponse.text();
+      console.log('\n=== GOOGLE HEALTH SUBSCRIBER RESPONSE (POST CREATE) ===');
+      console.log('Status Code:', createResponse.status, createResponse.statusText);
+      console.log('Response Body:', createResponseText);
+      console.log('=======================================================');
+
       if (createResponse.ok) {
         return {
           active: true,
@@ -396,6 +416,14 @@ export class GoogleHealthAdapter implements ProviderAdapter {
       // If subscriber already exists (409 Conflict), issue PATCH to update configuration
       if (createResponse.status === 409) {
         const patchUrl = `https://health.googleapis.com/v4/projects/${projectId}/subscribers/${subscriberId}?updateMask=endpointUri,endpointAuthorization,subscriberConfigs`;
+        
+        console.log('\n=== GOOGLE HEALTH SUBSCRIBER OUTGOING REQUEST (PATCH UPDATE) ===');
+        console.log('Method: PATCH');
+        console.log('URL:', patchUrl);
+        console.log('Headers:', JSON.stringify(debugHeaders, null, 2));
+        console.log('Body:', JSON.stringify(subscriberPayload, null, 2));
+        console.log('=======================================================');
+
         const patchResponse = await fetchWithTimeout(patchUrl, {
           method: 'PATCH',
           headers: {
@@ -409,6 +437,12 @@ export class GoogleHealthAdapter implements ProviderAdapter {
           retries: 1,
         });
 
+        const patchResponseText = await patchResponse.text();
+        console.log('\n=== GOOGLE HEALTH SUBSCRIBER RESPONSE (PATCH UPDATE) ===');
+        console.log('Status Code:', patchResponse.status, patchResponse.statusText);
+        console.log('Response Body:', patchResponseText);
+        console.log('=======================================================');
+
         if (patchResponse.ok) {
           return {
             active: true,
@@ -417,19 +451,17 @@ export class GoogleHealthAdapter implements ProviderAdapter {
           };
         }
 
-        const patchErr = await patchResponse.text();
         return {
           active: false,
           subscriberId,
-          error: `Failed to update existing project subscriber: HTTP ${patchResponse.status} ${patchErr}`,
+          error: `Failed to update existing project subscriber: HTTP ${patchResponse.status} ${patchResponseText}`,
         };
       }
 
-      const createErr = await createResponse.text();
       return {
         active: false,
         subscriberId,
-        error: `Failed to create project subscriber: HTTP ${createResponse.status} ${createErr}`,
+        error: `Failed to create project subscriber: HTTP ${createResponse.status} ${createResponseText}`,
       };
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
