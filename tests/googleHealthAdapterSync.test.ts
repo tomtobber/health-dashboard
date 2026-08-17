@@ -1,4 +1,5 @@
 import { GoogleHealthAdapter, splitDateRange, toKebabCase, toSnakeCase } from '../src/adapters/googleHealthAdapter';
+import { ExternalServiceError } from '../src/errors/AppError';
 
 describe('GoogleHealthAdapter Sync & Range Splitting', () => {
   test('toKebabCase and toSnakeCase correctly convert metric names', () => {
@@ -78,7 +79,6 @@ describe('GoogleHealthAdapter Sync & Range Splitting', () => {
   });
 
   test('ExternalServiceError carries upstreamStatusCode correctly', () => {
-    const { ExternalServiceError } = require('../src/errors/AppError');
     const err = new ExternalServiceError('GoogleHealthAPI', 'Unauthorized', 401);
     expect(err.statusCode).toBe(502);
     expect(err.upstreamStatusCode).toBe(401);
