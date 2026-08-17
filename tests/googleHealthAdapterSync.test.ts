@@ -65,4 +65,15 @@ describe('GoogleHealthAdapter Sync & Range Splitting', () => {
     expect(mapped[0].unit).toBe('count');
     expect(mapped[0].startTime).toEqual(new Date('2026-08-16T12:00:00.000Z'));
   });
+
+  test('refreshToken returns fresh accessToken and valid scopes', async () => {
+    const adapter = new GoogleHealthAdapter();
+    const res = await adapter.refreshToken('mock_refresh_token_xyz');
+
+    expect(res).toBeDefined();
+    expect(res.accessToken).toBeDefined();
+    expect(res.accessToken).toContain('mock_refreshed_access_token');
+    expect(res.expiresIn).toBe(3600);
+    expect(res.scopes).toEqual(GoogleHealthAdapter.SCOPES);
+  });
 });

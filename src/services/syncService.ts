@@ -2,10 +2,10 @@
 import { syncRuns, metricEntries, connectedAccounts } from '../db/schema';
 import { eq, and, gte, lte, isNull, inArray } from 'drizzle-orm';
 import { GoogleHealthAdapter } from '../adapters/googleHealthAdapter';
-import { SyncParams, NormalizedMetricEntry } from '../adapters/baseAdapter';
+import { SyncParams, SyncResult, NormalizedMetricEntry } from '../adapters/baseAdapter';
 import { downsampleEntries } from './downsamplingService';
-import { decryptToken } from './cryptoService';
-import { DatabaseError, NotFoundError } from '../errors/AppError';
+import { encryptToken, decryptToken } from './cryptoService';
+import { DatabaseError, NotFoundError, ExternalServiceError } from '../errors/AppError';
 import { logger } from '../utils/logger';
 
 export interface ExecuteSyncOptions extends SyncParams {
@@ -54,6 +54,7 @@ export async function executeSync(options: ExecuteSyncOptions): Promise<SyncExec
   }
 
   try {
+    let accountRecord: typeof connectedAccounts.$inferSelect | undefined;
     let accessToken = options.accessToken;
     if (!accessToken && (process.env.NODE_ENV !== 'test' || process.env.DATABASE_URL?.includes('neon.tech'))) {
       const [account] = await db.select()
@@ -66,13 +67,48 @@ export async function executeSync(options: ExecuteSyncOptions): Promise<SyncExec
           userId: options.userId,
         });
       }
+      accountRecord = account;
       accessToken = decryptToken(account.accessToken);
     }
 
-    const syncResult = await adapter.sync({
-      ...options,
-      accessToken: accessToken || 'mock_token',
-    });
+    let syncResult: SyncResult;
+    try {
+      syncResult = await adapter.sync({
+        ...options,
+        accessToken: accessToken || 'mock_token',
+      });
+    } catch (syncErr: unknown) {
+      if (
+        syncErr instanceof ExternalServiceError &&
+        syncErr.statusCode === 401 &&
+        accountRecord?.refreshToken
+      ) {
+        logger.info('OAuth access token expired (401), automatically refreshing with refresh_token', {
+          operation: 'executeSync:autoRefresh',
+          userId: options.userId,
+        });
+        const decryptedRefreshToken = decryptToken(accountRecord.refreshToken);
+        const refreshed = await adapter.refreshToken(decryptedRefreshToken);
+        accessToken = refreshed.accessToken;
+
+        // Persist refreshed access token (and new refresh token if rotated) to database
+        await db.update(connectedAccounts)
+          .set({
+            accessToken: encryptToken(refreshed.accessToken),
+            refreshToken: refreshed.refreshToken ? encryptToken(refreshed.refreshToken) : accountRecord.refreshToken,
+            updatedAt: new Date(),
+          })
+          .where(eq(connectedAccounts.id, accountRecord.id));
+
+        // Retry sync with the fresh access token
+        syncResult = await adapter.sync({
+          ...options,
+          accessToken,
+        });
+      } else {
+        throw syncErr;
+      }
+    }
 
     const rawEntries = syncResult.mappedEntries || [];
     const downsampledEntries = downsampleEntries(rawEntries, options.downsampleBucketMinutes || 1);
