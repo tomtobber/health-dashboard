@@ -1,6 +1,20 @@
-import { GoogleHealthAdapter, splitDateRange } from '../src/adapters/googleHealthAdapter';
+import { GoogleHealthAdapter, splitDateRange, toKebabCase, toSnakeCase } from '../src/adapters/googleHealthAdapter';
 
 describe('GoogleHealthAdapter Sync & Range Splitting', () => {
+  test('toKebabCase and toSnakeCase correctly convert metric names', () => {
+    expect(toKebabCase('activeZoneMinutes')).toBe('active-zone-minutes');
+    expect(toKebabCase('active_zone_minutes')).toBe('active-zone-minutes');
+    expect(toKebabCase('heartRate')).toBe('heart-rate');
+    expect(toKebabCase('runVo2Max')).toBe('run-vo2-max');
+    expect(toKebabCase('steps')).toBe('steps');
+
+    expect(toSnakeCase('active-zone-minutes')).toBe('active_zone_minutes');
+    expect(toSnakeCase('activeZoneMinutes')).toBe('active_zone_minutes');
+    expect(toSnakeCase('heart-rate')).toBe('heart_rate');
+    expect(toSnakeCase('run-vo2-max')).toBe('run_vo2_max');
+    expect(toSnakeCase('steps')).toBe('steps');
+  });
+
   test('splitDateRange correctly splits date ranges beyond maximum days', () => {
     const start = new Date('2026-01-01T00:00:00Z');
     const end = new Date('2026-01-30T00:00:00Z');
@@ -18,7 +32,7 @@ describe('GoogleHealthAdapter Sync & Range Splitting', () => {
       userId: 'test_user_id',
       startDate: new Date('2026-08-01T00:00:00Z'),
       endDate: new Date('2026-08-05T00:00:00Z'),
-      metricTypes: ['steps', 'heart_rate'],
+      metricTypes: ['steps', 'heart-rate'],
       accessToken: 'mock_access_token',
     });
 
@@ -26,5 +40,29 @@ describe('GoogleHealthAdapter Sync & Range Splitting', () => {
     expect(res.pointsFetched).toBeGreaterThan(0);
     expect(res.mappedEntries).toBeDefined();
     expect(res.mappedEntries!.length).toBeGreaterThan(0);
+  });
+
+  test('mapToNormalizedSchema maps Google Health v4 DataPoint objects', () => {
+    const adapter = new GoogleHealthAdapter();
+    const v4DataPoint = {
+      name: 'users/me/dataTypes/steps/dataPoints/sample_123',
+      interval: {
+        startTime: '2026-08-16T12:00:00.000Z',
+        endTime: '2026-08-16T12:01:00.000Z',
+      },
+      steps: {
+        count: 150,
+      },
+      userId: 'user_abc',
+      metricType: 'steps',
+    };
+
+    const mapped = adapter.mapToNormalizedSchema(v4DataPoint);
+    expect(mapped.length).toBe(1);
+    expect(mapped[0].metricType).toBe('steps');
+    expect(mapped[0].externalId).toBe('users/me/dataTypes/steps/dataPoints/sample_123');
+    expect(mapped[0].valueNumeric).toBe(150);
+    expect(mapped[0].unit).toBe('count');
+    expect(mapped[0].startTime).toEqual(new Date('2026-08-16T12:00:00.000Z'));
   });
 });

@@ -77,6 +77,20 @@ export const POLLING_ONLY_METRICS = [
   'totalCalories',
 ];
 
+export function toKebabCase(str: string): string {
+  return str
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replace(/[\s_]+/g, '-')
+    .toLowerCase();
+}
+
+export function toSnakeCase(str: string): string {
+  return str
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[\s-]+/g, '_')
+    .toLowerCase();
+}
+
 export function splitDateRange(startDate: Date, endDate: Date, maxDays: number): { start: Date; end: Date }[] {
   const ranges: { start: Date; end: Date }[] = [];
   const maxMs = maxDays * 24 * 60 * 60 * 1000;
@@ -490,7 +504,7 @@ export class GoogleHealthAdapter implements ProviderAdapter {
   }
 
   public async sync(params: SyncParams): Promise<SyncResult> {
-    const metricTypes = params.metricTypes || ['steps', 'heart_rate', 'sleep', 'weight'];
+    const metricTypes = params.metricTypes || ['steps', 'heart-rate', 'sleep', 'weight'];
     const allEntries: NormalizedMetricEntry[] = [];
     let pagesFetched = 0;
     let pointsFetched = 0;
@@ -498,61 +512,83 @@ export class GoogleHealthAdapter implements ProviderAdapter {
     for (const metricType of metricTypes) {
       const maxDays = METRICS_14_DAY.has(metricType) ? 14 : 90;
       const ranges = splitDateRange(params.startDate, params.endDate, maxDays);
+      const kebabMetric = toKebabCase(metricType);
+      const snakeMetric = toSnakeCase(metricType);
 
       for (const range of ranges) {
         pagesFetched += 1;
         if (env.NODE_ENV === 'test' || params.accessToken?.startsWith('mock_')) {
-          const sampleCount = metricType === 'heart_rate' ? 5 : 2;
+          const sampleCount = (metricType.includes('heart') || metricType.includes('rate')) ? 5 : 2;
           pointsFetched += sampleCount;
           for (let i = 0; i < sampleCount; i++) {
-            const timeOffset = i * (metricType === 'heart_rate' ? 5000 : 3600000);
+            const timeOffset = i * (sampleCount === 5 ? 5000 : 3600000);
             const startTime = new Date(range.start.getTime() + timeOffset);
-            const endTime = new Date(startTime.getTime() + (metricType === 'heart_rate' ? 5000 : 3600000));
+            const endTime = new Date(startTime.getTime() + (sampleCount === 5 ? 5000 : 3600000));
             const sourceStream = params.sourceStream || (i % 2 === 0 ? 'raw' : 'reconciled');
             allEntries.push({
               userId: params.userId,
               provider: this.providerName,
-              metricType,
-              externalId: sourceStream === 'raw' ? 'mock_ext_' + metricType + '_' + startTime.getTime() : undefined,
+              metricType: kebabMetric,
+              externalId: sourceStream === 'raw' ? 'mock_ext_' + kebabMetric + '_' + startTime.getTime() : undefined,
               startTime,
               endTime,
-              valueNumeric: metricType === 'heart_rate' ? 72 + i : 1000 + (i * 500),
-              unit: metricType === 'heart_rate' ? 'bpm' : 'count',
+              valueNumeric: sampleCount === 5 ? 72 + i : 1000 + (i * 500),
+              unit: sampleCount === 5 ? 'bpm' : 'count',
               sourceStream,
               aggregation: 'raw',
-              rawPayload: { metricType, sampleIndex: i, time: startTime.toISOString() },
+              rawPayload: { metricType: kebabMetric, sampleIndex: i, time: startTime.toISOString() },
             });
           }
         } else {
-          const url = 'https://www.googleapis.com/googlehealth/v1/users/' + params.userId + '/dataTypes/' + metricType + '/dataPoints';
-          const queryParams = new URLSearchParams({
-            startTime: range.start.toISOString(),
-            endTime: range.end.toISOString(),
-          });
+          // Official Google Health REST v4 endpoint
+          const isReconciled = params.sourceStream === 'reconciled';
+          const endpointSuffix = isReconciled ? ':reconcile' : '';
+          const url = `https://health.googleapis.com/v4/users/me/dataTypes/${kebabMetric}/dataPoints${endpointSuffix}`;
+          
+          // Official AIP-160 time filter format (snake_case property in filter expression)
+          const filter = `${snakeMetric}.interval.start_time >= "${range.start.toISOString()}" AND ${snakeMetric}.interval.start_time < "${range.end.toISOString()}"`;
+          const queryParams = new URLSearchParams({ filter });
+
           const response = await fetchWithTimeout(url + '?' + queryParams.toString(), {
             method: 'GET',
-            headers: { Authorization: 'Bearer ' + params.accessToken },
+            headers: { 
+              Authorization: 'Bearer ' + params.accessToken,
+              Accept: 'application/json',
+            },
             serviceName: 'GoogleHealthAPI',
             timeoutMs: 10000,
             retries: 2,
           });
+
           if (!response.ok) {
             const errText = await response.text();
             throw new ExternalServiceError('GoogleHealthAPI', errText, response.status, {
               operation: 'sync',
-              metricType,
+              metricType: kebabMetric,
               userId: params.userId,
+              requestUrl: url,
             });
           }
+
           const body: unknown = await response.json();
-          if (typeof body === 'object' && body !== null && 'points' in body && Array.isArray((body as { points: unknown[] }).points)) {
-            const rawPoints = (body as { points: Record<string, unknown>[] }).points;
-            pointsFetched += rawPoints.length;
-            for (const pt of rawPoints) {
-              pt.userId = params.userId;
-              pt.metricType = metricType;
-              allEntries.push(...this.mapToNormalizedSchema(pt));
+          let rawPoints: Record<string, unknown>[] = [];
+          if (typeof body === 'object' && body !== null) {
+            const b = body as Record<string, unknown>;
+            if (Array.isArray(b.dataPoints)) {
+              rawPoints = b.dataPoints as Record<string, unknown>[];
+            } else if (Array.isArray(b.points)) {
+              rawPoints = b.points as Record<string, unknown>[];
             }
+          }
+
+          pointsFetched += rawPoints.length;
+          for (const pt of rawPoints) {
+            pt.userId = params.userId;
+            pt.metricType = kebabMetric;
+            if (params.sourceStream) {
+              pt.sourceStream = params.sourceStream;
+            }
+            allEntries.push(...this.mapToNormalizedSchema(pt));
           }
         }
       }
@@ -578,15 +614,73 @@ export class GoogleHealthAdapter implements ProviderAdapter {
 
   public mapToNormalizedSchema(rawPoint: Record<string, unknown>): NormalizedMetricEntry[] {
     const userId = typeof rawPoint.userId === 'string' ? rawPoint.userId : '';
-    const metricType = typeof rawPoint.metricType === 'string' ? rawPoint.metricType : 'heart_rate';
-    const externalId = typeof rawPoint.id === 'string' ? rawPoint.id : undefined;
-    const valueNumeric = typeof rawPoint.value === 'number' ? rawPoint.value : undefined;
-    const valueText = typeof rawPoint.valueText === 'string' ? rawPoint.valueText : undefined;
-    const unit = typeof rawPoint.unit === 'string' ? rawPoint.unit : 'count';
+    const metricType = typeof rawPoint.metricType === 'string' ? toKebabCase(rawPoint.metricType) : 'heart-rate';
+    
+    // Extract external ID (v4 resource name: users/me/dataTypes/{type}/dataPoints/{id})
+    let externalId: string | undefined;
+    if (typeof rawPoint.name === 'string') {
+      externalId = rawPoint.name;
+    } else if (typeof rawPoint.id === 'string') {
+      externalId = rawPoint.id;
+    } else if (typeof rawPoint.dataPointName === 'string') {
+      externalId = rawPoint.dataPointName;
+    }
+
+    // Extract interval start / end times
+    let startTime = new Date();
+    let endTime = new Date();
+    if (typeof rawPoint.interval === 'object' && rawPoint.interval !== null) {
+      const interval = rawPoint.interval as Record<string, unknown>;
+      if (interval.startTime) startTime = new Date(String(interval.startTime));
+      if (interval.endTime) endTime = new Date(String(interval.endTime));
+    } else if (typeof rawPoint.physicalTimeInterval === 'object' && rawPoint.physicalTimeInterval !== null) {
+      const interval = rawPoint.physicalTimeInterval as Record<string, unknown>;
+      if (interval.startTime) startTime = new Date(String(interval.startTime));
+      if (interval.endTime) endTime = new Date(String(interval.endTime));
+    } else {
+      if (rawPoint.startTime) startTime = new Date(String(rawPoint.startTime));
+      if (rawPoint.endTime) endTime = new Date(String(rawPoint.endTime));
+    }
+
+    // Extract numeric or text values from root or nested metric payload
+    let valueNumeric: number | undefined;
+    let valueText: string | undefined;
+    let unit = typeof rawPoint.unit === 'string' ? rawPoint.unit : 'count';
+
+    if (typeof rawPoint.value === 'number') {
+      valueNumeric = rawPoint.value;
+    } else if (typeof rawPoint.valueNumeric === 'number') {
+      valueNumeric = rawPoint.valueNumeric;
+    } else if (typeof rawPoint.valueText === 'string') {
+      valueText = rawPoint.valueText;
+    }
+
+    // Check nested metric object (e.g. rawPoint.steps.count, rawPoint.heartRate.beatsPerMinute)
+    const metricKeyCamel = metricType.replace(/-([a-z])/g, (_, g) => g.toUpperCase());
+    const nested = (rawPoint[metricType] || rawPoint[metricKeyCamel]) as Record<string, unknown> | undefined;
+    if (nested && typeof nested === 'object') {
+      if (typeof nested.count === 'number') {
+        valueNumeric = nested.count;
+        unit = 'count';
+      } else if (typeof nested.beatsPerMinute === 'number') {
+        valueNumeric = nested.beatsPerMinute;
+        unit = 'bpm';
+      } else if (typeof nested.activeZoneMinutes === 'number') {
+        valueNumeric = nested.activeZoneMinutes;
+        unit = 'minutes';
+      } else if (typeof nested.weightKilograms === 'number' || typeof nested.weightGrams === 'number') {
+        valueNumeric = typeof nested.weightKilograms === 'number' ? nested.weightKilograms : (nested.weightGrams as number) / 1000;
+        unit = 'kg';
+      } else if (typeof nested.distanceMeters === 'number') {
+        valueNumeric = nested.distanceMeters;
+        unit = 'meters';
+      } else if (typeof nested.value === 'number') {
+        valueNumeric = nested.value;
+      }
+    }
+
     const sourceStream = rawPoint.sourceStream === 'reconciled' ? 'reconciled' : 'raw';
     const aggregation = typeof rawPoint.aggregation === 'string' ? rawPoint.aggregation : 'raw';
-    const startTime = rawPoint.startTime ? new Date(String(rawPoint.startTime)) : new Date();
-    const endTime = rawPoint.endTime ? new Date(String(rawPoint.endTime)) : new Date();
 
     return [{
       userId,
