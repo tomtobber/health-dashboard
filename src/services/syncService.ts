@@ -78,33 +78,49 @@ export async function executeSync(options: ExecuteSyncOptions): Promise<SyncExec
         accessToken: accessToken || 'mock_token',
       });
     } catch (syncErr: unknown) {
-      if (
+      const is401 =
         syncErr instanceof ExternalServiceError &&
-        syncErr.statusCode === 401 &&
-        accountRecord?.refreshToken
-      ) {
-        logger.info('OAuth access token expired (401), automatically refreshing with refresh_token', {
-          operation: 'executeSync:autoRefresh',
-          userId: options.userId,
-        });
-        const decryptedRefreshToken = decryptToken(accountRecord.refreshToken);
-        const refreshed = await adapter.refreshToken(decryptedRefreshToken);
-        accessToken = refreshed.accessToken;
+        (syncErr.upstreamStatusCode === 401 ||
+          syncErr.statusCode === 401 ||
+          syncErr.message.includes('401') ||
+          syncErr.message.includes('UNAUTHENTICATED'));
 
-        // Persist refreshed access token (and new refresh token if rotated) to database
-        await db.update(connectedAccounts)
-          .set({
-            accessToken: encryptToken(refreshed.accessToken),
-            refreshToken: refreshed.refreshToken ? encryptToken(refreshed.refreshToken) : accountRecord.refreshToken,
-            updatedAt: new Date(),
-          })
-          .where(eq(connectedAccounts.id, accountRecord.id));
+      if (is401) {
+        if (!accountRecord && (process.env.NODE_ENV !== 'test' || process.env.DATABASE_URL?.includes('neon.tech'))) {
+          const [found] = await db
+            .select()
+            .from(connectedAccounts)
+            .where(and(eq(connectedAccounts.userId, options.userId), eq(connectedAccounts.provider, providerName)));
+          accountRecord = found;
+        }
 
-        // Retry sync with the fresh access token
-        syncResult = await adapter.sync({
-          ...options,
-          accessToken,
-        });
+        if (accountRecord?.refreshToken) {
+          logger.info('OAuth access token expired (upstream 401), automatically refreshing with refresh_token', {
+            operation: 'executeSync:autoRefresh',
+            userId: options.userId,
+          });
+          const decryptedRefreshToken = decryptToken(accountRecord.refreshToken);
+          const refreshed = await adapter.refreshToken(decryptedRefreshToken);
+          accessToken = refreshed.accessToken;
+
+          // Persist refreshed access token (and new refresh token if rotated) to database
+          await db
+            .update(connectedAccounts)
+            .set({
+              accessToken: encryptToken(refreshed.accessToken),
+              refreshToken: refreshed.refreshToken ? encryptToken(refreshed.refreshToken) : accountRecord.refreshToken,
+              updatedAt: new Date(),
+            })
+            .where(eq(connectedAccounts.id, accountRecord.id));
+
+          // Retry sync with the fresh access token
+          syncResult = await adapter.sync({
+            ...options,
+            accessToken,
+          });
+        } else {
+          throw syncErr;
+        }
       } else {
         throw syncErr;
       }

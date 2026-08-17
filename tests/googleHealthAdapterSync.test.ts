@@ -76,4 +76,12 @@ describe('GoogleHealthAdapter Sync & Range Splitting', () => {
     expect(res.expiresIn).toBe(3600);
     expect(res.scopes).toEqual(GoogleHealthAdapter.SCOPES);
   });
+
+  test('ExternalServiceError carries upstreamStatusCode correctly', () => {
+    const { ExternalServiceError } = require('../src/errors/AppError');
+    const err = new ExternalServiceError('GoogleHealthAPI', 'Unauthorized', 401);
+    expect(err.statusCode).toBe(502);
+    expect(err.upstreamStatusCode).toBe(401);
+    expect(err.serviceName).toBe('GoogleHealthAPI');
+  });
 });
