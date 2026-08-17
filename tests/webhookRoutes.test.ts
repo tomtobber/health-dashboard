@@ -217,4 +217,44 @@ describe('Webhook Routes & Exact Attribution (Official Google Health API Spec)',
     expect(res.status).toBe(400);
     expect(res.body).toHaveProperty('code', 'VALIDATION_ERROR');
   });
+
+  test('BATCH NOTIFICATIONS: Root-level array batch payload responds 204 and processes correctly', async () => {
+    const res = await request(app)
+      .post('/api/webhooks/google')
+      .set('Authorization', `Bearer ${env.WEBHOOK_AUTH_TOKEN}`)
+      .send([
+        {
+          data: {
+            healthUserId: 'google_health_user_A_1001',
+            dataType: 'steps',
+            operation: 'UPSERT',
+            intervals: [
+              {
+                physicalTimeInterval: {
+                  startTime: '2026-08-17T12:00:00Z',
+                  endTime: '2026-08-17T12:05:00Z',
+                },
+              },
+            ],
+          },
+        },
+        {
+          data: {
+            healthUserId: 'google_health_user_B_2002',
+            dataType: 'heart-rate',
+            operation: 'UPSERT',
+            intervals: [
+              {
+                physicalTimeInterval: {
+                  startTime: '2026-08-17T12:00:00Z',
+                  endTime: '2026-08-17T12:05:00Z',
+                },
+              },
+            ],
+          },
+        },
+      ]);
+
+    expect(res.status).toBe(204);
+  });
 });

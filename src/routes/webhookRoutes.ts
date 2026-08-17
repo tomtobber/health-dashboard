@@ -1,4 +1,4 @@
-﻿import { Router, Request, Response } from 'express';
+import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../utils/asyncHandler';
 import { executeSync } from '../services/syncService';
@@ -30,17 +30,25 @@ export const singleNotificationItemSchema = z.object({
 
 export type NotificationItem = z.infer<typeof singleNotificationItemSchema>;
 
+const singleDataContainerSchema = z.object({
+  data: z.union([
+    z.array(singleNotificationItemSchema).min(1),
+    singleNotificationItemSchema,
+  ]),
+});
+
+const verificationSchema = z.object({
+  type: z.literal('verification'),
+});
+
 export const webhookPayloadSchema = z.union([
-  z.object({
-    type: z.literal('verification'),
-  }),
-  z.object({
-    data: z.union([
-      z.array(singleNotificationItemSchema).min(1),
-      singleNotificationItemSchema,
-    ]),
-  }),
+  verificationSchema,
+  singleDataContainerSchema,
+  singleNotificationItemSchema,
+  z.array(z.union([singleDataContainerSchema, singleNotificationItemSchema])).min(1),
 ]);
+
+export type WebhookPayload = z.infer<typeof webhookPayloadSchema>;
 
 /**
  * Authenticates incoming Google Health webhook requests via Bearer token.
@@ -133,7 +141,7 @@ export async function resolveLocalUserId(
  * 
  * Handles:
  * 1. Subscription verification probes ({"type":"verification"}) -> responds 200 OK
- * 2. Real Google Health API webhook notifications ({"data": [...]}) -> responds 204 No Content
+ * 2. Real Google Health API webhook notifications (objects or batched arrays) -> responds 204 No Content
  * 
  * Executes data synchronization asynchronously.
  */
@@ -155,16 +163,37 @@ webhookRouter.post(
     const payload = parseResult.data;
 
     // 3. Handle verification probe from Google Health API (Google requires 200 or 201 response)
-    if ('type' in payload) {
+    if (!Array.isArray(payload) && 'type' in payload && payload.type === 'verification') {
       logger.info('Google Health webhook subscription verification probe received and authorized', {
         operation: 'googleWebhookVerificationProbe',
       });
       return res.status(200).end();
     }
 
-    // 4. Handle real notification data payload
-    const notificationData = payload.data;
-    const items: NotificationItem[] = Array.isArray(notificationData) ? notificationData : [notificationData];
+    // 4. Extract all notification items from single object or root array batch
+    const items: NotificationItem[] = [];
+
+    if (Array.isArray(payload)) {
+      for (const entry of payload) {
+        if ('data' in entry) {
+          if (Array.isArray(entry.data)) {
+            items.push(...entry.data);
+          } else {
+            items.push(entry.data);
+          }
+        } else if ('healthUserId' in entry) {
+          items.push(entry);
+        }
+      }
+    } else if ('data' in payload) {
+      if (Array.isArray(payload.data)) {
+        items.push(...payload.data);
+      } else {
+        items.push(payload.data);
+      }
+    } else if ('healthUserId' in payload) {
+      items.push(payload);
+    }
 
     for (const item of items) {
       // Resolve target user strictly
