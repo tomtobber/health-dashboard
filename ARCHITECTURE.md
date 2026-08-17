@@ -352,7 +352,7 @@ Matched against `connected_accounts.health_user_id` (populated via
    `daily-heart-rate-zones`, `daily-oxygen-saturation`,
    `daily-respiratory-rate`, `daily-resting-heart-rate`,
    `daily-sleep-temperature-derivations`, `distance`, `exercise`,
-   `floors`, `heart-rate`, `heart-rate-variability`, `height`,
+   ``, `heart-rate`, `heart-rate-variability`, `height`,
    `hydration-log`, `nutrition-log`, `respiratory-rate-sleep-summary`,
    `run-vo2-max`, `sedentary-period`, `sleep`,
    `time-in-heart-rate-zone`, `weight`. 26 of 27 documented types

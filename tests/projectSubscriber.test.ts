@@ -34,7 +34,6 @@ describe('Project-Scoped Subscriber Management', () => {
       'daily-sleep-temperature-derivations',
       'distance',
       'exercise',
-      'floors',
       'heart-rate',
       'heart-rate-variability',
       'height',
@@ -50,7 +49,7 @@ describe('Project-Scoped Subscriber Management', () => {
     ];
 
     expect(WEBHOOK_SUPPORTED_METRICS).toEqual(verifiedKebabCaseMetrics);
-    expect(WEBHOOK_SUPPORTED_METRICS.length).toBe(27);
+    expect(WEBHOOK_SUPPORTED_METRICS.length).toBe(26);
 
     // Assert strictly that zero snake_case formatting exists
     for (const metric of WEBHOOK_SUPPORTED_METRICS) {

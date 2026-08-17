@@ -27,6 +27,7 @@ export const METRICS_14_DAY = new Set([
   'active-zone-minutes',
   'total_calories',
   'totalCalories',
+  'floors',
   'total-calories',
   'calories_in_zone',
   'caloriesInHeartRateZone',
@@ -49,7 +50,6 @@ export const WEBHOOK_SUPPORTED_METRICS = [
   'daily-sleep-temperature-derivations',
   'distance',
   'exercise',
-  'floors',
   'heart-rate',
   'heart-rate-variability',
   'height',
@@ -588,7 +588,7 @@ export class GoogleHealthAdapter implements ProviderAdapter {
           }
         } else {
           // Official Google Health REST v4 endpoint
-          const isReconciled = params.sourceStream === 'reconciled';
+          const isReconciled = params.sourceStream === 'reconciled' || kebabMetric === 'floors' || kebabMetric === 'calories-in-heart-rate-zone';
           const endpointSuffix = isReconciled ? ':reconcile' : '';
           let url = `https://health.googleapis.com/v4/users/me/dataTypes/${kebabMetric}/dataPoints${endpointSuffix}`;
           
