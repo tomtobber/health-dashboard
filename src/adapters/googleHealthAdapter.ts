@@ -91,6 +91,54 @@ export function toSnakeCase(str: string): string {
     .toLowerCase();
 }
 
+export function buildAip160Filter(kebabMetric: string, startDate: Date, endDate: Date): string | undefined {
+  const snake = toSnakeCase(kebabMetric);
+  const startIso = startDate.toISOString();
+  const endIso = endDate.toISOString();
+  const startDateStr = startIso.split('T')[0];
+
+  // 1. Daily metrics filtered by date (YYYY-MM-DD)
+  if (kebabMetric.startsWith('daily-')) {
+    const nextDay = new Date(endDate.getTime() + 24 * 60 * 60 * 1000);
+    const nextDayStr = nextDay.toISOString().split('T')[0];
+    return `${snake}.date >= "${startDateStr}" AND ${snake}.date < "${nextDayStr}"`;
+  }
+
+  // 2. Instantaneous / sample-based metrics
+  const sampleTimeMetrics = new Set([
+    'blood-glucose',
+    'body-fat',
+    'heart-rate',
+    'heart-rate-variability',
+    'height',
+    'hydration-log',
+    'nutrition-log',
+    'respiratory-rate-sleep-summary',
+    'run-vo2-max',
+    'weight',
+  ]);
+  if (sampleTimeMetrics.has(kebabMetric)) {
+    return `${snake}.sample_time.physical_time >= "${startIso}" AND ${snake}.sample_time.physical_time < "${endIso}"`;
+  }
+
+  // 3. Interval-based metrics
+  const intervalMetrics = new Set([
+    'active-zone-minutes',
+    'activity-level',
+    'altitude',
+    'distance',
+    'sedentary-period',
+    'steps',
+    'time-in-heart-rate-zone',
+  ]);
+  if (intervalMetrics.has(kebabMetric)) {
+    return `${snake}.interval.start_time >= "${startIso}" AND ${snake}.interval.start_time < "${endIso}"`;
+  }
+
+  // 4. Session/complex metrics like sleep and exercise (fetched unfiltered and windowed in-memory)
+  return undefined;
+}
+
 export function splitDateRange(startDate: Date, endDate: Date, maxDays: number): { start: Date; end: Date }[] {
   const ranges: { start: Date; end: Date }[] = [];
   const maxMs = maxDays * 24 * 60 * 60 * 1000;
@@ -513,7 +561,6 @@ export class GoogleHealthAdapter implements ProviderAdapter {
       const maxDays = METRICS_14_DAY.has(metricType) ? 14 : 90;
       const ranges = splitDateRange(params.startDate, params.endDate, maxDays);
       const kebabMetric = toKebabCase(metricType);
-      const snakeMetric = toSnakeCase(metricType);
 
       for (const range of ranges) {
         pagesFetched += 1;
@@ -543,13 +590,16 @@ export class GoogleHealthAdapter implements ProviderAdapter {
           // Official Google Health REST v4 endpoint
           const isReconciled = params.sourceStream === 'reconciled';
           const endpointSuffix = isReconciled ? ':reconcile' : '';
-          const url = `https://health.googleapis.com/v4/users/me/dataTypes/${kebabMetric}/dataPoints${endpointSuffix}`;
+          let url = `https://health.googleapis.com/v4/users/me/dataTypes/${kebabMetric}/dataPoints${endpointSuffix}`;
           
-          // Official AIP-160 time filter format (snake_case property in filter expression)
-          const filter = `${snakeMetric}.interval.start_time >= "${range.start.toISOString()}" AND ${snakeMetric}.interval.start_time < "${range.end.toISOString()}"`;
-          const queryParams = new URLSearchParams({ filter });
+          // Official AIP-160 time filter format per metric category
+          const filter = buildAip160Filter(kebabMetric, range.start, range.end);
+          if (filter) {
+            const queryParams = new URLSearchParams({ filter });
+            url += '?' + queryParams.toString();
+          }
 
-          const response = await fetchWithTimeout(url + '?' + queryParams.toString(), {
+          const response = await fetchWithTimeout(url, {
             method: 'GET',
             headers: { 
               Authorization: 'Bearer ' + params.accessToken,

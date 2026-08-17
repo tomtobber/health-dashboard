@@ -1,4 +1,4 @@
-import { GoogleHealthAdapter, splitDateRange, toKebabCase, toSnakeCase } from '../src/adapters/googleHealthAdapter';
+import { GoogleHealthAdapter, splitDateRange, toKebabCase, toSnakeCase, buildAip160Filter } from '../src/adapters/googleHealthAdapter';
 import { ExternalServiceError } from '../src/errors/AppError';
 
 describe('GoogleHealthAdapter Sync & Range Splitting', () => {
@@ -83,5 +83,29 @@ describe('GoogleHealthAdapter Sync & Range Splitting', () => {
     expect(err.statusCode).toBe(502);
     expect(err.upstreamStatusCode).toBe(401);
     expect(err.serviceName).toBe('GoogleHealthAPI');
+  });
+
+  test('buildAip160Filter constructs correct filter expressions per metric type', () => {
+    const start = new Date('2026-08-16T00:00:00Z');
+    const end = new Date('2026-08-17T00:00:00Z');
+
+    // Interval metric
+    expect(buildAip160Filter('steps', start, end)).toBe(
+      'steps.interval.start_time >= "2026-08-16T00:00:00.000Z" AND steps.interval.start_time < "2026-08-17T00:00:00.000Z"'
+    );
+
+    // Instantaneous / sample-time metric
+    expect(buildAip160Filter('blood-glucose', start, end)).toBe(
+      'blood_glucose.sample_time.physical_time >= "2026-08-16T00:00:00.000Z" AND blood_glucose.sample_time.physical_time < "2026-08-17T00:00:00.000Z"'
+    );
+
+    // Daily aggregate metric
+    expect(buildAip160Filter('daily-resting-heart-rate', start, end)).toBe(
+      'daily_resting_heart_rate.date >= "2026-08-16" AND daily_resting_heart_rate.date < "2026-08-18"'
+    );
+
+    // Session metrics (unfiltered)
+    expect(buildAip160Filter('sleep', start, end)).toBeUndefined();
+    expect(buildAip160Filter('exercise', start, end)).toBeUndefined();
   });
 });
