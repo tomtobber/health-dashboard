@@ -662,37 +662,60 @@ export class GoogleHealthAdapter implements ProviderAdapter {
     };
   }
 
-  public mapToNormalizedSchema(rawPoint: Record<string, unknown>): NormalizedMetricEntry[] {
+    public mapToNormalizedSchema(rawPoint: Record<string, unknown>): NormalizedMetricEntry[] {
     const userId = typeof rawPoint.userId === 'string' ? rawPoint.userId : '';
     const metricType = typeof rawPoint.metricType === 'string' ? toKebabCase(rawPoint.metricType) : 'heart-rate';
-    
-    // Extract external ID (v4 resource name: users/me/dataTypes/{type}/dataPoints/{id})
+    const metricKeyCamel = metricType.replace(/-([a-z0-9])/g, (_, g) => g.toUpperCase());
+    const nested = (rawPoint[metricType] || rawPoint[metricKeyCamel]) as Record<string, unknown> | undefined;
+
+    // 1. Extract external ID (v4 resource name: users/me/dataTypes/{type}/dataPoints/{id})
     let externalId: string | undefined;
-    if (typeof rawPoint.name === 'string') {
-      externalId = rawPoint.name;
-    } else if (typeof rawPoint.id === 'string') {
-      externalId = rawPoint.id;
-    } else if (typeof rawPoint.dataPointName === 'string') {
-      externalId = rawPoint.dataPointName;
+    if (typeof rawPoint.name === 'string' && rawPoint.name.trim()) {
+      externalId = rawPoint.name.trim();
+    } else if (typeof rawPoint.id === 'string' && rawPoint.id.trim()) {
+      externalId = rawPoint.id.trim();
+    } else if (typeof rawPoint.dataPointName === 'string' && rawPoint.dataPointName.trim()) {
+      externalId = rawPoint.dataPointName.trim();
     }
 
-    // Extract interval start / end times
+    // 2. Extract timestamp from nested interval, root interval, sampleTime, or date
     let startTime = new Date();
     let endTime = new Date();
-    if (typeof rawPoint.interval === 'object' && rawPoint.interval !== null) {
-      const interval = rawPoint.interval as Record<string, unknown>;
-      if (interval.startTime) startTime = new Date(String(interval.startTime));
-      if (interval.endTime) endTime = new Date(String(interval.endTime));
-    } else if (typeof rawPoint.physicalTimeInterval === 'object' && rawPoint.physicalTimeInterval !== null) {
-      const interval = rawPoint.physicalTimeInterval as Record<string, unknown>;
-      if (interval.startTime) startTime = new Date(String(interval.startTime));
-      if (interval.endTime) endTime = new Date(String(interval.endTime));
+
+    const intervalObj = (nested?.interval || rawPoint.interval || rawPoint.physicalTimeInterval) as Record<string, unknown> | undefined;
+    const sampleTimeObj = (nested?.sampleTime || rawPoint.sampleTime) as Record<string, unknown> | undefined;
+    const dateVal = nested?.date || rawPoint.date || nested?.summaryDate || rawPoint.summaryDate;
+
+    if (intervalObj) {
+      if (intervalObj.startTime) startTime = new Date(String(intervalObj.startTime));
+      if (intervalObj.endTime) endTime = new Date(String(intervalObj.endTime));
+      else endTime = startTime;
+    } else if (sampleTimeObj?.physicalTime) {
+      startTime = new Date(String(sampleTimeObj.physicalTime));
+      endTime = startTime;
+    } else if (dateVal) {
+      if (typeof dateVal === 'object' && dateVal !== null) {
+        const d = dateVal as { year?: number; month?: number; day?: number };
+        const y = d.year || 2026;
+        const m = String(d.month || 1).padStart(2, '0');
+        const day = String(d.day || 1).padStart(2, '0');
+        startTime = new Date(`${y}-${m}-${day}T00:00:00.000Z`);
+        endTime = new Date(`${y}-${m}-${day}T23:59:59.999Z`);
+      } else {
+        const dStr = String(dateVal);
+        startTime = new Date(`${dStr}T00:00:00.000Z`);
+        endTime = new Date(`${dStr}T23:59:59.999Z`);
+      }
     } else {
       if (rawPoint.startTime) startTime = new Date(String(rawPoint.startTime));
       if (rawPoint.endTime) endTime = new Date(String(rawPoint.endTime));
     }
 
-    // Extract numeric or text values from root or nested metric payload
+    if (!externalId) {
+      externalId = `gh_${metricType}_${startTime.getTime()}`;
+    }
+
+    // 3. Extract numeric or text values (handling string numbers like "98", "66", "32500")
     let valueNumeric: number | undefined;
     let valueText: string | undefined;
     let unit = typeof rawPoint.unit === 'string' ? rawPoint.unit : 'count';
@@ -705,46 +728,69 @@ export class GoogleHealthAdapter implements ProviderAdapter {
       valueText = rawPoint.valueText;
     }
 
-    // Check nested metric object (e.g. rawPoint.steps.count, rawPoint.heartRate.beatsPerMinute)
-    const metricKeyCamel = metricType.replace(/-([a-z])/g, (_, g) => g.toUpperCase());
-    const nested = (rawPoint[metricType] || rawPoint[metricKeyCamel]) as Record<string, unknown> | undefined;
     if (nested && typeof nested === 'object') {
-      if (typeof nested.count === 'number') {
-        valueNumeric = nested.count;
+      if (nested.count !== undefined) {
+        valueNumeric = Number(nested.count);
         unit = 'count';
-      } else if (typeof nested.beatsPerMinute === 'number') {
-        valueNumeric = nested.beatsPerMinute;
+      } else if (nested.beatsPerMinute !== undefined) {
+        valueNumeric = Number(nested.beatsPerMinute);
         unit = 'bpm';
-      } else if (typeof nested.activeZoneMinutes === 'number') {
-        valueNumeric = nested.activeZoneMinutes;
+      } else if (nested.heartRateBpm !== undefined || nested.restingHeartRateBpm !== undefined) {
+        valueNumeric = Number(nested.heartRateBpm ?? nested.restingHeartRateBpm);
+        unit = 'bpm';
+      } else if (nested.activeZoneMinutes !== undefined) {
+        valueNumeric = Number(nested.activeZoneMinutes);
         unit = 'minutes';
-      } else if (typeof nested.weightKilograms === 'number' || typeof nested.weightGrams === 'number') {
-        valueNumeric = typeof nested.weightKilograms === 'number' ? nested.weightKilograms : (nested.weightGrams as number) / 1000;
-        unit = 'kg';
-      } else if (typeof nested.distanceMeters === 'number') {
-        valueNumeric = nested.distanceMeters;
+      } else if (nested.millimeters !== undefined) {
+        valueNumeric = Number(nested.millimeters) / 1000; // mm -> meters
         unit = 'meters';
-      } else if (typeof nested.value === 'number') {
-        valueNumeric = nested.value;
+      } else if (nested.distanceMeters !== undefined) {
+        valueNumeric = Number(nested.distanceMeters);
+        unit = 'meters';
+      } else if (nested.weightKilograms !== undefined || nested.weightGrams !== undefined) {
+        valueNumeric = nested.weightKilograms !== undefined ? Number(nested.weightKilograms) : Number(nested.weightGrams) / 1000;
+        unit = 'kg';
+      } else if (nested.bloodGlucoseConcentration !== undefined || nested.concentration !== undefined) {
+        valueNumeric = Number(nested.bloodGlucoseConcentration ?? nested.concentration);
+        unit = 'mg/dL';
+      } else if (nested.percentage !== undefined) {
+        valueNumeric = Number(nested.percentage);
+        unit = '%';
+      } else if (nested.vo2Max !== undefined || nested.runVo2Max !== undefined) {
+        valueNumeric = Number(nested.vo2Max ?? nested.runVo2Max);
+        unit = 'mL/kg/min';
+      } else if (nested.value !== undefined && !isNaN(Number(nested.value))) {
+        valueNumeric = Number(nested.value);
+      }
+
+      // Categorical / text values
+      if (typeof nested.activityLevelType === 'string') {
+        valueText = nested.activityLevelType;
+      } else if (typeof nested.heartRateZoneType === 'string') {
+        valueText = nested.heartRateZoneType;
+      } else if (typeof nested.sleepStageType === 'string' || typeof nested.type === 'string') {
+        valueText = String(nested.sleepStageType ?? nested.type);
       }
     }
 
-    const sourceStream = rawPoint.sourceStream === 'reconciled' ? 'reconciled' : 'raw';
+    const sourceStream: 'raw' | 'reconciled' = rawPoint.sourceStream === 'reconciled' ? 'reconciled' : 'raw';
     const aggregation = typeof rawPoint.aggregation === 'string' ? rawPoint.aggregation : 'raw';
 
-    return [{
-      userId,
-      provider: this.providerName,
-      metricType,
-      externalId,
-      startTime,
-      endTime,
-      valueNumeric,
-      valueText,
-      unit,
-      sourceStream,
-      aggregation,
-      rawPayload: rawPoint,
-    }];
+    return [
+      {
+        userId,
+        provider: 'google_health',
+        metricType,
+        externalId,
+        startTime,
+        endTime,
+        valueNumeric: valueNumeric !== undefined && !isNaN(valueNumeric) ? valueNumeric : 0,
+        valueText,
+        unit,
+        sourceStream,
+        aggregation,
+        rawPayload: rawPoint,
+      },
+    ];
   }
 }

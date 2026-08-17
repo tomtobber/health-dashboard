@@ -108,4 +108,77 @@ describe('GoogleHealthAdapter Sync & Range Splitting', () => {
     expect(buildAip160Filter('sleep', start, end)).toBeUndefined();
     expect(buildAip160Filter('exercise', start, end)).toBeUndefined();
   });
+
+  test('mapToNormalizedSchema maps protobuf string numbers and nested interval/date structures', () => {
+    const adapter = new GoogleHealthAdapter();
+
+    // 1. Steps with string count and nested interval
+    const stepPoint = {
+      userId: 'user_1',
+      metricType: 'steps',
+      steps: {
+        count: '98',
+        interval: {
+          startTime: '2026-08-17T19:04:00Z',
+          endTime: '2026-08-17T19:05:00Z',
+        },
+      },
+    };
+    const mappedSteps = adapter.mapToNormalizedSchema(stepPoint);
+    expect(mappedSteps[0].valueNumeric).toBe(98);
+    expect(mappedSteps[0].unit).toBe('count');
+    expect(mappedSteps[0].startTime).toEqual(new Date('2026-08-17T19:04:00Z'));
+    expect(mappedSteps[0].endTime).toEqual(new Date('2026-08-17T19:05:00Z'));
+    expect(mappedSteps[0].externalId).toBe('gh_steps_' + new Date('2026-08-17T19:04:00Z').getTime());
+
+    // 2. Heart rate with string beatsPerMinute and sampleTime
+    const hrPoint = {
+      userId: 'user_1',
+      metricType: 'heart-rate',
+      heartRate: {
+        beatsPerMinute: '66',
+        sampleTime: {
+          physicalTime: '2026-08-17T19:45:32Z',
+        },
+      },
+    };
+    const mappedHr = adapter.mapToNormalizedSchema(hrPoint);
+    expect(mappedHr[0].valueNumeric).toBe(66);
+    expect(mappedHr[0].unit).toBe('bpm');
+    expect(mappedHr[0].startTime).toEqual(new Date('2026-08-17T19:45:32Z'));
+
+    // 3. Activity level with categorical text
+    const actPoint = {
+      userId: 'user_1',
+      metricType: 'activity-level',
+      activityLevel: {
+        activityLevelType: 'SEDENTARY',
+        interval: {
+          startTime: '2026-08-17T19:37:00Z',
+          endTime: '2026-08-17T19:38:00Z',
+        },
+      },
+    };
+    const mappedAct = adapter.mapToNormalizedSchema(actPoint);
+    expect(mappedAct[0].valueText).toBe('SEDENTARY');
+    expect(mappedAct[0].startTime).toEqual(new Date('2026-08-17T19:37:00Z'));
+
+    // 4. Daily resting heart rate with date object { year, month, day }
+    const dailyPoint = {
+      userId: 'user_1',
+      metricType: 'daily-resting-heart-rate',
+      dailyRestingHeartRate: {
+        beatsPerMinute: '59',
+        date: {
+          year: 2026,
+          month: 8,
+          day: 16,
+        },
+      },
+    };
+    const mappedDaily = adapter.mapToNormalizedSchema(dailyPoint);
+    expect(mappedDaily[0].valueNumeric).toBe(59);
+    expect(mappedDaily[0].unit).toBe('bpm');
+    expect(mappedDaily[0].startTime).toEqual(new Date('2026-08-16T00:00:00.000Z'));
+  });
 });
