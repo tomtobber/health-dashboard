@@ -611,16 +611,21 @@ export class GoogleHealthAdapter implements ProviderAdapter {
           if (!response.ok) {
             const errText = await response.text();
 
-            // Graceful skip for missing optional OAuth scopes (e.g. ECG) or unsupported stream actions
+            // Graceful skip for missing optional OAuth scopes (e.g. ECG), unsupported actions, or unbacked data types
             const isMissingScope = response.status === 403 && (errText.includes('MISSING_OAUTH_SCOPE') || errText.includes('PERMISSION_DENIED') || errText.includes('Required OAuth scope'));
-            const isUnsupportedAction = response.status === 400 && errText.includes('UNSUPPORTED_DATA_TYPE_ACTION');
+            const isUnsupportedAction = response.status === 400 && (
+              errText.includes('UNSUPPORTED_DATA_TYPE_ACTION') ||
+              errText.includes('INVALID_PARENT_DATA_TYPE_COLLECTION') ||
+              errText.includes('is not supported') ||
+              errText.includes('Invalid data type ID')
+            );
 
             if (isMissingScope || isUnsupportedAction) {
               logger.warn('Skipping metric query due to missing scope or unsupported stream action', {
                 operation: 'googleHealthSync:skipMetric',
                 metricType: kebabMetric,
                 status: response.status,
-                reason: isMissingScope ? 'MISSING_OAUTH_SCOPE' : 'UNSUPPORTED_DATA_TYPE_ACTION',
+                reason: isMissingScope ? 'MISSING_OAUTH_SCOPE' : 'UNSUPPORTED_OR_INVALID_DATA_TYPE',
                 userId: params.userId,
               });
               continue;
