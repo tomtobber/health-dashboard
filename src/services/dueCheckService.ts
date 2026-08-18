@@ -116,14 +116,29 @@ export async function evaluateAndRunDueSyncs(options?: {
 
         if (isReconcileDue) {
           const startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); // 7-day rolling window for reconciliation
+          
+          // Step 1: Raw stream sweep (syncs changes and soft-deletes missing points)
           await executeSync({
             userId,
             provider,
             startDate,
             endDate: now,
             metricTypes: WEBHOOK_SUPPORTED_METRICS,
+            sourceStream: 'raw',
             trigger: 'reconciliation',
           });
+
+          // Step 2: Reconciled stream sweep (pulls Google's consolidated :reconcile stream)
+          await executeSync({
+            userId,
+            provider,
+            startDate,
+            endDate: now,
+            metricTypes: WEBHOOK_SUPPORTED_METRICS,
+            sourceStream: 'reconciled',
+            trigger: 'reconciliation',
+          });
+
           summary.reconciliationExecuted += 1;
         }
       } catch (err: unknown) {
