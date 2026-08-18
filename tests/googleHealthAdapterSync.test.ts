@@ -181,4 +181,19 @@ describe('GoogleHealthAdapter Sync & Range Splitting', () => {
     expect(mappedDaily[0].unit).toBe('bpm');
     expect(mappedDaily[0].startTime).toEqual(new Date('2026-08-16T00:00:00.000Z'));
   });
+
+  test('sync method skips metrics with 403 MISSING_OAUTH_SCOPE gracefully without failing entire batch', async () => {
+    const adapter = new GoogleHealthAdapter();
+    const res = await adapter.sync({
+      userId: 'test_user_id',
+      startDate: new Date('2026-08-01T00:00:00Z'),
+      endDate: new Date('2026-08-05T00:00:00Z'),
+      metricTypes: ['steps', 'electrocardiogram', 'heart-rate'],
+      accessToken: 'mock_access_token',
+    });
+
+    expect(res.status).toBe('completed');
+    expect(res.mappedEntries).toBeDefined();
+    expect(res.mappedEntries!.length).toBeGreaterThan(0);
+  });
 });

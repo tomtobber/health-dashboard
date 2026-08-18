@@ -348,7 +348,7 @@ Matched against `connected_accounts.health_user_id` (populated via
    **Individually confirmed accepted by the live `subscribers.create`/
    `update` API, kebab-case, real 200 responses**: `steps`, `altitude`,
    `active-zone-minutes`, `activity-level`, `blood-glucose`, `body-fat`,
-   `calories-in-heart-rate-zone`, `daily-heart-rate-variability`,
+   ``, `daily-heart-rate-variability`,
    `daily-heart-rate-zones`, `daily-oxygen-saturation`,
    `daily-respiratory-rate`, `daily-resting-heart-rate`,
    `daily-sleep-temperature-derivations`, `distance`, `exercise`,
@@ -422,7 +422,7 @@ separate task from ongoing sync, not a variant of it:
     for why, and note this list has already grown twice unexpectedly;
     don't assume it's final)
 - Most data types support ~90 days per query; heart rate, active minutes,
-  total calories, and calories-in-heart-rate-zone are capped at 14 days per
+  total calories, and are capped at 14 days per
   request — batch requests accordingly.
 - Failed webhook deliveries retry for up to 7 days before being dropped;
   the reconciliation job is the safety net beyond that window (see

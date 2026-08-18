@@ -31,7 +31,6 @@ export const METRICS_14_DAY = new Set([
   'total-calories',
   'calories_in_zone',
   'caloriesInHeartRateZone',
-  'calories-in-heart-rate-zone',
 ]);
 
 // Official Google Health API webhook-supported subscriber metric types (kebab-case, excluding rejected total-calories)
@@ -41,7 +40,6 @@ export const WEBHOOK_SUPPORTED_METRICS = [
   'altitude',
   'blood-glucose',
   'body-fat',
-  'calories-in-heart-rate-zone',
   'daily-heart-rate-variability',
   'daily-heart-rate-zones',
   'daily-oxygen-saturation',
@@ -612,6 +610,22 @@ export class GoogleHealthAdapter implements ProviderAdapter {
 
           if (!response.ok) {
             const errText = await response.text();
+
+            // Graceful skip for missing optional OAuth scopes (e.g. ECG) or unsupported stream actions
+            const isMissingScope = response.status === 403 && (errText.includes('MISSING_OAUTH_SCOPE') || errText.includes('PERMISSION_DENIED') || errText.includes('Required OAuth scope'));
+            const isUnsupportedAction = response.status === 400 && errText.includes('UNSUPPORTED_DATA_TYPE_ACTION');
+
+            if (isMissingScope || isUnsupportedAction) {
+              logger.warn('Skipping metric query due to missing scope or unsupported stream action', {
+                operation: 'googleHealthSync:skipMetric',
+                metricType: kebabMetric,
+                status: response.status,
+                reason: isMissingScope ? 'MISSING_OAUTH_SCOPE' : 'UNSUPPORTED_DATA_TYPE_ACTION',
+                userId: params.userId,
+              });
+              continue;
+            }
+
             throw new ExternalServiceError('GoogleHealthAPI', errText, response.status, {
               operation: 'sync',
               metricType: kebabMetric,

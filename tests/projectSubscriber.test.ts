@@ -25,7 +25,6 @@ describe('Project-Scoped Subscriber Management', () => {
       'altitude',
       'blood-glucose',
       'body-fat',
-      'calories-in-heart-rate-zone',
       'daily-heart-rate-variability',
       'daily-heart-rate-zones',
       'daily-oxygen-saturation',
@@ -49,7 +48,7 @@ describe('Project-Scoped Subscriber Management', () => {
     ];
 
     expect(WEBHOOK_SUPPORTED_METRICS).toEqual(verifiedKebabCaseMetrics);
-    expect(WEBHOOK_SUPPORTED_METRICS.length).toBe(26);
+    expect(WEBHOOK_SUPPORTED_METRICS.length).toBe(25);
 
     // Assert strictly that zero snake_case formatting exists
     for (const metric of WEBHOOK_SUPPORTED_METRICS) {
