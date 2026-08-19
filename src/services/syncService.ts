@@ -136,73 +136,42 @@ export async function executeSync(options: ExecuteSyncOptions): Promise<SyncExec
 
     if (isLiveDb && downsampledEntries.length > 0) {
       for (const entry of downsampledEntries) {
-        if (entry.externalId) {
-          await db.insert(metricEntries).values({
-            userId: entry.userId,
-            provider: entry.provider,
-            metricType: entry.metricType,
-            externalId: entry.externalId,
+        const externalId = entry.externalId || `gh_${entry.metricType}_${entry.startTime.getTime()}`;
+        
+        await db.insert(metricEntries).values({
+          userId: entry.userId,
+          provider: entry.provider,
+          metricType: entry.metricType,
+          externalId,
+          startTime: entry.startTime,
+          endTime: entry.endTime,
+          valueNumeric: entry.valueNumeric,
+          valueText: entry.valueText ?? null,
+          unit: entry.unit,
+          sourceStream: entry.sourceStream,
+          aggregation: entry.aggregation,
+          rawPayload: entry.rawPayload,
+          updatedAt: new Date(),
+        }).onConflictDoUpdate({
+          target: [
+            metricEntries.userId,
+            metricEntries.provider,
+            metricEntries.metricType,
+            metricEntries.sourceStream,
+            metricEntries.externalId,
+          ],
+          set: {
+            valueNumeric: entry.valueNumeric,
+            valueText: entry.valueText ?? null,
+            unit: entry.unit,
             startTime: entry.startTime,
             endTime: entry.endTime,
-            valueNumeric: entry.valueNumeric,
-            valueText: entry.valueText,
-            unit: entry.unit,
-            sourceStream: entry.sourceStream,
             aggregation: entry.aggregation,
             rawPayload: entry.rawPayload,
             updatedAt: new Date(),
-          }).onConflictDoUpdate({
-            target: [
-              metricEntries.userId,
-              metricEntries.provider,
-              metricEntries.metricType,
-              metricEntries.sourceStream,
-              metricEntries.externalId,
-            ],
-            set: {
-              valueNumeric: entry.valueNumeric,
-              valueText: entry.valueText,
-              unit: entry.unit,
-              aggregation: entry.aggregation,
-              rawPayload: entry.rawPayload,
-              updatedAt: new Date(),
-              deletedAt: null,
-            },
-          });
-        } else {
-          await db.insert(metricEntries).values({
-            userId: entry.userId,
-            provider: entry.provider,
-            metricType: entry.metricType,
-            startTime: entry.startTime,
-            endTime: entry.endTime,
-            valueNumeric: entry.valueNumeric,
-            valueText: entry.valueText,
-            unit: entry.unit,
-            sourceStream: entry.sourceStream,
-            aggregation: entry.aggregation,
-            rawPayload: entry.rawPayload,
-            updatedAt: new Date(),
-          }).onConflictDoUpdate({
-            target: [
-              metricEntries.userId,
-              metricEntries.provider,
-              metricEntries.metricType,
-              metricEntries.sourceStream,
-              metricEntries.startTime,
-              metricEntries.endTime,
-            ],
-            set: {
-              valueNumeric: entry.valueNumeric,
-              valueText: entry.valueText,
-              unit: entry.unit,
-              aggregation: entry.aggregation,
-              rawPayload: entry.rawPayload,
-              updatedAt: new Date(),
-              deletedAt: null,
-            },
-          });
-        }
+            deletedAt: null,
+          },
+        });
         pointsUpserted += 1;
       }
     } else {
