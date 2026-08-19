@@ -552,6 +552,7 @@ export class GoogleHealthAdapter implements ProviderAdapter {
   public async sync(params: SyncParams): Promise<SyncResult> {
     const metricTypes = params.metricTypes || ['steps', 'heart-rate', 'sleep', 'weight'];
     const allEntries: NormalizedMetricEntry[] = [];
+    const skippedMetrics: Array<{ metricType: string; status: number; reason: string }> = [];
     let pagesFetched = 0;
     let pointsFetched = 0;
 
@@ -621,13 +622,15 @@ export class GoogleHealthAdapter implements ProviderAdapter {
             );
 
             if (isMissingScope || isUnsupportedAction) {
+              const reason = isMissingScope ? 'MISSING_OAUTH_SCOPE' : 'UNSUPPORTED_OR_INVALID_DATA_TYPE';
               logger.warn('Skipping metric query due to missing scope or unsupported stream action', {
                 operation: 'googleHealthSync:skipMetric',
                 metricType: kebabMetric,
                 status: response.status,
-                reason: isMissingScope ? 'MISSING_OAUTH_SCOPE' : 'UNSUPPORTED_OR_INVALID_DATA_TYPE',
+                reason,
                 userId: params.userId,
               });
+              skippedMetrics.push({ metricType: kebabMetric, status: response.status, reason });
               continue;
             }
 

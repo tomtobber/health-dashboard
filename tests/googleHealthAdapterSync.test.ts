@@ -41,6 +41,8 @@ describe('GoogleHealthAdapter Sync & Range Splitting', () => {
     expect(res.pointsFetched).toBeGreaterThan(0);
     expect(res.mappedEntries).toBeDefined();
     expect(res.mappedEntries!.length).toBeGreaterThan(0);
+    // Check skippedMetrics or mappedEntries status
+    expect(res.status).toBe('completed');
   });
 
   test('mapToNormalizedSchema maps Google Health v4 DataPoint objects', () => {

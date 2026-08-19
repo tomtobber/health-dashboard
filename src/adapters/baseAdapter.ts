@@ -16,6 +16,12 @@ export interface SyncParams {
   sourceStream?: 'raw' | 'reconciled';
 }
 
+export interface SkippedMetricInfo {
+  metricType: string;
+  status: number;
+  reason: string;
+}
+
 export interface SyncResult {
   syncRunId: string;
   pointsFetched: number;
@@ -24,6 +30,7 @@ export interface SyncResult {
   status: 'completed' | 'failed';
   error?: string;
   mappedEntries?: NormalizedMetricEntry[];
+  skippedMetrics?: SkippedMetricInfo[];
 }
 
 export interface NormalizedMetricEntry {

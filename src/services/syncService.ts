@@ -1,4 +1,5 @@
-﻿import { db } from '../db';
+import { sql } from 'drizzle-orm';
+import { db } from '../db';
 import { syncRuns, metricEntries, connectedAccounts } from '../db/schema';
 import { eq, and, gte, lte, isNull, inArray } from 'drizzle-orm';
 import { GoogleHealthAdapter } from '../adapters/googleHealthAdapter';
@@ -161,15 +162,15 @@ export async function executeSync(options: ExecuteSyncOptions): Promise<SyncExec
             metricEntries.externalId,
           ],
           set: {
-            valueNumeric: entry.valueNumeric,
-            valueText: entry.valueText ?? null,
-            unit: entry.unit,
-            startTime: entry.startTime,
-            endTime: entry.endTime,
-            aggregation: entry.aggregation,
-            rawPayload: entry.rawPayload,
-            updatedAt: new Date(),
-            deletedAt: null,
+            valueNumeric: sql`EXCLUDED.value_numeric`,
+            valueText: sql`EXCLUDED.value_text`,
+            unit: sql`EXCLUDED.unit`,
+            startTime: sql`EXCLUDED.start_time`,
+            endTime: sql`EXCLUDED.end_time`,
+            aggregation: sql`EXCLUDED.aggregation`,
+            rawPayload: sql`EXCLUDED.raw_payload`,
+            updatedAt: sql`NOW()`,
+            deletedAt: sql`NULL`,
           },
         });
         pointsUpserted += 1;

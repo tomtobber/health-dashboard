@@ -64,6 +64,7 @@ describe('Sync Routes', () => {
   });
 
   test('POST /api/sync/scheduled succeeds with valid CRON_SECRET and evaluates due syncs', async () => {
+
     const res = await request(app)
       .post('/api/sync/scheduled')
       .set('Authorization', `Bearer ${env.CRON_SECRET}`)
