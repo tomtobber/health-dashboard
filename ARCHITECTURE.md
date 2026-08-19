@@ -487,6 +487,17 @@ forward).
   Render deployment meant for real use at the same connection string
   simultaneously used for destructive testing (cascade-delete/rollback
   tests specifically).
+- **Go-live plan (decided)**: fresh start, not a data migration — test
+  branch data is not copied to production. Sequence: (1) confirm data
+  quality against test branch, (2) test full backfill against test
+  branch, (3) live-verify two-account webhook attribution against test
+  branch using a second throwaway Google account — this must happen
+  *before* production goes live, since it's the one fix in this project
+  with a real data-corruption risk profile, (4) switch Render's
+  `DATABASE_URL` to the live branch connection string, (5) disconnect/
+  reconnect the real Google account against production and let backfill
+  run fresh. After go-live, the test branch reverts to its normal role
+  as the dev/CI sandbox for all future phases.
 - **OAuth project stays Google Cloud** — unrelated to the above. The
   `GOOGLE_REDIRECT_URI` just needs to be a real HTTPS URL matching what's
   registered as an Authorized redirect URI in Google Cloud Console;
