@@ -684,20 +684,20 @@ export class GoogleHealthAdapter implements ProviderAdapter {
     };
   }
 
-    public mapToNormalizedSchema(rawPoint: Record<string, unknown>): NormalizedMetricEntry[] {
+      public mapToNormalizedSchema(rawPoint: Record<string, unknown>): NormalizedMetricEntry[] {
     const userId = typeof rawPoint.userId === 'string' ? rawPoint.userId : '';
     const metricType = typeof rawPoint.metricType === 'string' ? toKebabCase(rawPoint.metricType) : 'heart-rate';
     const metricKeyCamel = metricType.replace(/-([a-z0-9])/g, (_, g) => g.toUpperCase());
     const nested = (rawPoint[metricType] || rawPoint[metricKeyCamel]) as Record<string, unknown> | undefined;
 
-    // 1. Extract external ID (v4 resource name: users/me/dataTypes/{type}/dataPoints/{id})
-    let externalId: string | undefined;
+    // 1. Extract external ID base
+    let baseExternalId: string | undefined;
     if (typeof rawPoint.name === 'string' && rawPoint.name.trim()) {
-      externalId = rawPoint.name.trim();
+      baseExternalId = rawPoint.name.trim();
     } else if (typeof rawPoint.id === 'string' && rawPoint.id.trim()) {
-      externalId = rawPoint.id.trim();
+      baseExternalId = rawPoint.id.trim();
     } else if (typeof rawPoint.dataPointName === 'string' && rawPoint.dataPointName.trim()) {
-      externalId = rawPoint.dataPointName.trim();
+      baseExternalId = rawPoint.dataPointName.trim();
     }
 
     // 2. Extract timestamp from nested interval, root interval, sampleTime, or date
@@ -733,12 +733,158 @@ export class GoogleHealthAdapter implements ProviderAdapter {
       if (rawPoint.endTime) endTime = new Date(String(rawPoint.endTime));
     }
 
-    if (!externalId) {
-      externalId = `gh_${metricType}_${startTime.getTime()}`;
+    if (!baseExternalId) {
+      baseExternalId = `gh_${metricType}_${startTime.getTime()}`;
     }
 
-    // 3. Extract numeric or text values (handling string numbers like "98", "66", "32500")
-    let valueNumeric: number | undefined;
+    const sourceStream: 'raw' | 'reconciled' = rawPoint.sourceStream === 'reconciled' ? 'reconciled' : 'raw';
+    const aggregation = typeof rawPoint.aggregation === 'string' ? rawPoint.aggregation : 'raw';
+
+    const createEntry = (dimension: string, valueNumeric: number, unit: string, valueText?: string, extIdSuffix?: string): NormalizedMetricEntry => ({
+      userId,
+      provider: 'google_health',
+      metricType,
+      externalId: extIdSuffix ? `${baseExternalId}_${extIdSuffix}` : (dimension !== 'default' ? `${baseExternalId}_${dimension}` : baseExternalId),
+      startTime,
+      endTime,
+      valueNumeric: !isNaN(valueNumeric) ? valueNumeric : 0,
+      valueText,
+      unit,
+      dimension,
+      sourceStream,
+      aggregation,
+      rawPayload: rawPoint,
+    });
+
+    const entries: NormalizedMetricEntry[] = [];
+
+    // -------------------------------------------------------------
+    // Metric-Specific Multi-Row & Dimension Splitting Logic
+    // -------------------------------------------------------------
+
+    // 1. SLEEP (Summary + Stages)
+    if (metricType === 'sleep') {
+      const summaryObj = (nested?.summary || rawPoint.summary) as Record<string, unknown> | undefined;
+      const totalMinutes = summaryObj?.minutesAsleep !== undefined ? Number(summaryObj.minutesAsleep) : (nested?.minutesAsleep !== undefined ? Number(nested.minutesAsleep) : 0);
+      entries.push(createEntry('summary', totalMinutes, 'minutes'));
+
+      if (summaryObj && Array.isArray(summaryObj.stagesSummary)) {
+        for (const stage of summaryObj.stagesSummary as Record<string, unknown>[]) {
+          if (stage.type) {
+            const stageType = String(stage.type).toLowerCase();
+            const stageMinutes = Number(stage.minutes || 0);
+            entries.push(createEntry(stageType, stageMinutes, 'minutes'));
+          }
+        }
+      }
+      return entries;
+    }
+
+    // 2. DAILY HEART RATE VARIABILITY
+    if (metricType === 'daily-heart-rate-variability' && nested) {
+      if (nested.averageHeartRateVariabilityMilliseconds !== undefined) {
+        entries.push(createEntry('daily_average', Number(nested.averageHeartRateVariabilityMilliseconds), 'ms'));
+      }
+      if (nested.deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds !== undefined) {
+        entries.push(createEntry('deep_sleep_rmssd', Number(nested.deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds), 'ms'));
+      }
+      if (nested.nonRemHeartRateBeatsPerMinute !== undefined) {
+        entries.push(createEntry('non_rem_hr', Number(nested.nonRemHeartRateBeatsPerMinute), 'bpm'));
+      }
+      if (nested.entropy !== undefined) {
+        entries.push(createEntry('entropy', Number(nested.entropy), 'index'));
+      }
+      if (entries.length > 0) return entries;
+    }
+
+    // 3. RESPIRATORY RATE SLEEP SUMMARY
+    if (metricType === 'respiratory-rate-sleep-summary' && nested) {
+      const fullSleep = nested.fullSleepStats as Record<string, unknown> | undefined;
+      const deepSleep = nested.deepSleepStats as Record<string, unknown> | undefined;
+      const remSleep = nested.remSleepStats as Record<string, unknown> | undefined;
+      const lightSleep = nested.lightSleepStats as Record<string, unknown> | undefined;
+
+      if (fullSleep?.breathsPerMinute !== undefined) entries.push(createEntry('full_sleep', Number(fullSleep.breathsPerMinute), 'breaths_per_minute'));
+      if (deepSleep?.breathsPerMinute !== undefined) entries.push(createEntry('deep_sleep', Number(deepSleep.breathsPerMinute), 'breaths_per_minute'));
+      if (remSleep?.breathsPerMinute !== undefined) entries.push(createEntry('rem_sleep', Number(remSleep.breathsPerMinute), 'breaths_per_minute'));
+      if (lightSleep?.breathsPerMinute !== undefined) entries.push(createEntry('light_sleep', Number(lightSleep.breathsPerMinute), 'breaths_per_minute'));
+      if (entries.length > 0) return entries;
+    }
+
+    // 4. DAILY OXYGEN SATURATION
+    if (metricType === 'daily-oxygen-saturation' && nested) {
+      if (nested.averagePercentage !== undefined) entries.push(createEntry('average', Number(nested.averagePercentage), '%'));
+      if (nested.lowerBoundPercentage !== undefined) entries.push(createEntry('lower_bound', Number(nested.lowerBoundPercentage), '%'));
+      if (nested.upperBoundPercentage !== undefined) entries.push(createEntry('upper_bound', Number(nested.upperBoundPercentage), '%'));
+      if (entries.length > 0) return entries;
+    }
+
+    // 5. DAILY SLEEP TEMPERATURE DERIVATIONS
+    if (metricType === 'daily-sleep-temperature-derivations' && nested) {
+      if (nested.nightlyTemperatureCelsius !== undefined) entries.push(createEntry('nightly', Number(nested.nightlyTemperatureCelsius), 'celsius'));
+      if (nested.baselineTemperatureCelsius !== undefined) entries.push(createEntry('baseline', Number(nested.baselineTemperatureCelsius), 'celsius'));
+      if (nested.relativeNightlyStddev30dCelsius !== undefined) entries.push(createEntry('relative_deviation', Number(nested.relativeNightlyStddev30dCelsius), 'celsius'));
+      if (entries.length > 0) return entries;
+    }
+
+    // 6. DAILY HEART RATE ZONES
+    if (metricType === 'daily-heart-rate-zones' && nested && Array.isArray(nested.heartRateZones)) {
+      for (const zone of nested.heartRateZones as Record<string, unknown>[]) {
+        if (zone.heartRateZoneType) {
+          const zoneName = String(zone.heartRateZoneType).toLowerCase();
+          const minBpm = Number(zone.minBeatsPerMinute || 0);
+          entries.push(createEntry(zoneName, minBpm, 'bpm'));
+        }
+      }
+      if (entries.length > 0) return entries;
+    }
+
+    // 7. ACTIVE ZONE MINUTES
+    if (metricType === 'active-zone-minutes') {
+      const zone = typeof nested?.heartRateZone === 'string' ? nested.heartRateZone.toLowerCase() : 'default';
+      const mins = nested?.activeZoneMinutes !== undefined ? Number(nested.activeZoneMinutes) : 0;
+      return [createEntry(zone, mins, 'minutes')];
+    }
+
+    // 8. TIME IN HEART RATE ZONE
+    if (metricType === 'time-in-heart-rate-zone') {
+      const zone = typeof nested?.heartRateZoneType === 'string' ? nested.heartRateZoneType.toLowerCase() : 'default';
+      return [createEntry(zone, 1, 'minutes', typeof nested?.heartRateZoneType === 'string' ? nested.heartRateZoneType : undefined)];
+    }
+
+    // 9. ACTIVITY LEVEL
+    if (metricType === 'activity-level') {
+      const level = typeof nested?.activityLevelType === 'string' ? nested.activityLevelType.toLowerCase() : 'default';
+      return [createEntry(level, 1, 'minutes', typeof nested?.activityLevelType === 'string' ? nested.activityLevelType : undefined)];
+    }
+
+    // 10. EXERCISE
+    if (metricType === 'exercise') {
+      const exType = typeof nested?.exerciseType === 'string' ? nested.exerciseType.toLowerCase() : 'exercise';
+      const durationSec = nested?.activeDuration ? parseInt(String(nested.activeDuration)) : 0;
+      return [createEntry(exType, durationSec, 'seconds', typeof nested?.displayName === 'string' ? nested.displayName : undefined)];
+    }
+
+    // 11. BLOOD GLUCOSE
+    if (metricType === 'blood-glucose') {
+      const src = typeof nested?.measurementSource === 'string' ? nested.measurementSource.toLowerCase() : 'default';
+      const val = Number(nested?.bloodGlucoseConcentration ?? nested?.concentration ?? 0);
+      return [createEntry(src, val, 'mg/dL')];
+    }
+
+    // 12. BLOOD PRESSURE
+    if (metricType === 'blood-pressure' && nested) {
+      const systolic = nested.systolic ?? nested.systolicMillimetersOfMercury;
+      const diastolic = nested.diastolic ?? nested.diastolicMillimetersOfMercury;
+      if (systolic !== undefined) entries.push(createEntry('systolic', Number(systolic), 'mmHg'));
+      if (diastolic !== undefined) entries.push(createEntry('diastolic', Number(diastolic), 'mmHg'));
+      if (entries.length > 0) return entries;
+    }
+
+    // -------------------------------------------------------------
+    // 12. Standard Scalar Fallback
+    // -------------------------------------------------------------
+    let valueNumeric = 0;
     let valueText: string | undefined;
     let unit = typeof rawPoint.unit === 'string' ? rawPoint.unit : 'count';
 
@@ -760,11 +906,8 @@ export class GoogleHealthAdapter implements ProviderAdapter {
       } else if (nested.heartRateBpm !== undefined || nested.restingHeartRateBpm !== undefined) {
         valueNumeric = Number(nested.heartRateBpm ?? nested.restingHeartRateBpm);
         unit = 'bpm';
-      } else if (nested.activeZoneMinutes !== undefined) {
-        valueNumeric = Number(nested.activeZoneMinutes);
-        unit = 'minutes';
       } else if (nested.millimeters !== undefined) {
-        valueNumeric = Number(nested.millimeters) / 1000; // mm -> meters
+        valueNumeric = Number(nested.millimeters) / 1000;
         unit = 'meters';
       } else if (nested.distanceMeters !== undefined) {
         valueNumeric = Number(nested.distanceMeters);
@@ -772,47 +915,23 @@ export class GoogleHealthAdapter implements ProviderAdapter {
       } else if (nested.weightKilograms !== undefined || nested.weightGrams !== undefined) {
         valueNumeric = nested.weightKilograms !== undefined ? Number(nested.weightKilograms) : Number(nested.weightGrams) / 1000;
         unit = 'kg';
-      } else if (nested.bloodGlucoseConcentration !== undefined || nested.concentration !== undefined) {
-        valueNumeric = Number(nested.bloodGlucoseConcentration ?? nested.concentration);
-        unit = 'mg/dL';
       } else if (nested.percentage !== undefined) {
         valueNumeric = Number(nested.percentage);
+        unit = '%';
+      } else if (nested.bodyFatPercentage !== undefined) {
+        valueNumeric = Number(nested.bodyFatPercentage);
         unit = '%';
       } else if (nested.vo2Max !== undefined || nested.runVo2Max !== undefined) {
         valueNumeric = Number(nested.vo2Max ?? nested.runVo2Max);
         unit = 'mL/kg/min';
+      } else if (nested.breathsPerMinute !== undefined) {
+        valueNumeric = Number(nested.breathsPerMinute);
+        unit = 'breaths_per_minute';
       } else if (nested.value !== undefined && !isNaN(Number(nested.value))) {
         valueNumeric = Number(nested.value);
       }
-
-      // Categorical / text values
-      if (typeof nested.activityLevelType === 'string') {
-        valueText = nested.activityLevelType;
-      } else if (typeof nested.heartRateZoneType === 'string') {
-        valueText = nested.heartRateZoneType;
-      } else if (typeof nested.sleepStageType === 'string' || typeof nested.type === 'string') {
-        valueText = String(nested.sleepStageType ?? nested.type);
-      }
     }
 
-    const sourceStream: 'raw' | 'reconciled' = rawPoint.sourceStream === 'reconciled' ? 'reconciled' : 'raw';
-    const aggregation = typeof rawPoint.aggregation === 'string' ? rawPoint.aggregation : 'raw';
-
-    return [
-      {
-        userId,
-        provider: 'google_health',
-        metricType,
-        externalId,
-        startTime,
-        endTime,
-        valueNumeric: valueNumeric !== undefined && !isNaN(valueNumeric) ? valueNumeric : 0,
-        valueText,
-        unit,
-        sourceStream,
-        aggregation,
-        rawPayload: rawPoint,
-      },
-    ];
+    return [createEntry('default', valueNumeric, unit, valueText)];
   }
 }

@@ -1,7 +1,7 @@
 import { NormalizedMetricEntry } from '../adapters/baseAdapter';
 import { logger } from '../utils/logger';
 
-export const HIGH_FREQUENCY_METRICS = new Set(['heart_rate']);
+export const HIGH_FREQUENCY_METRICS = new Set(['heart_rate', 'heart-rate']);
 
 export function downsampleEntries(
   entries: NormalizedMetricEntry[],
@@ -32,7 +32,7 @@ export function downsampleEntries(
   for (const entry of highFreqEntries) {
     const startMs = entry.startTime.getTime();
     const bucketStartMs = Math.floor(startMs / bucketMs) * bucketMs;
-    const bucketKey = entry.userId + '|' + entry.provider + '|' + entry.metricType + '|' + entry.sourceStream + '|' + bucketStartMs;
+    const bucketKey = entry.userId + '|' + entry.provider + '|' + entry.metricType + '|' + (entry.dimension || 'default') + '|' + entry.sourceStream + '|' + bucketStartMs;
 
     const group = groups.get(bucketKey);
     if (group) {
@@ -49,7 +49,7 @@ export function downsampleEntries(
 
     const first = groupEntries[0];
     const keyParts = key.split('|');
-    const bucketStartMs = parseInt(keyParts[4], 10);
+    const bucketStartMs = parseInt(keyParts[5], 10);
     const bucketStartTime = new Date(bucketStartMs);
     const bucketEndTime = new Date(bucketStartMs + bucketMs);
 
@@ -65,6 +65,7 @@ export function downsampleEntries(
       endTime: bucketEndTime,
       valueNumeric: avgValue,
       unit: first.unit,
+      dimension: first.dimension || 'default',
       sourceStream: first.sourceStream,
       aggregation: bucketMinutes + 'm_avg',
       rawPayload: {

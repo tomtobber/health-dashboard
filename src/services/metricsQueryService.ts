@@ -9,6 +9,7 @@ export interface MetricQueryFilter {
   metricType: string;
   startTime: Date;
   endTime: Date;
+  dimension?: string;
   aggregation?: string;
 }
 
@@ -23,8 +24,9 @@ export function filterReconciledOverRaw(entries: MetricEntryWithDelete[]): Norma
   const rawEntries: NormalizedMetricEntry[] = [];
 
   for (const entry of activeEntries) {
+    const dim = entry.dimension || 'default';
     if (entry.sourceStream === 'reconciled') {
-      const key = `${entry.startTime.toISOString()}-${entry.endTime.toISOString()}`;
+      const key = `${dim}_${entry.startTime.toISOString()}-${entry.endTime.toISOString()}`;
       reconciledMap.set(key, entry);
     } else {
       rawEntries.push(entry);
@@ -34,7 +36,8 @@ export function filterReconciledOverRaw(entries: MetricEntryWithDelete[]): Norma
   const result: NormalizedMetricEntry[] = Array.from(reconciledMap.values());
 
   for (const raw of rawEntries) {
-    const rawKey = `${raw.startTime.toISOString()}-${raw.endTime.toISOString()}`;
+    const dim = raw.dimension || 'default';
+    const rawKey = `${dim}_${raw.startTime.toISOString()}-${raw.endTime.toISOString()}`;
     if (!reconciledMap.has(rawKey)) {
       result.push(raw);
     }
@@ -71,6 +74,10 @@ export async function queryMetricEntriesFromDb(filter: MetricQueryFilter): Promi
       isNull(metricEntries.deletedAt),
     ];
 
+    if (filter.dimension) {
+      whereConditions.push(eq(metricEntries.dimension, filter.dimension));
+    }
+
     if (filter.aggregation) {
       whereConditions.push(eq(metricEntries.aggregation, filter.aggregation));
     }
@@ -90,6 +97,7 @@ export async function queryMetricEntriesFromDb(filter: MetricQueryFilter): Promi
       valueNumeric: row.valueNumeric ?? undefined,
       valueText: row.valueText ?? undefined,
       unit: row.unit,
+      dimension: row.dimension,
       sourceStream: row.sourceStream as 'raw' | 'reconciled',
       aggregation: row.aggregation,
       rawPayload: row.rawPayload as Record<string, unknown> | undefined,

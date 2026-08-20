@@ -33,6 +33,7 @@ export const metricEntries = pgTable('metric_entries', {
   valueNumeric: doublePrecision('value_numeric'),
   valueText: text('value_text'),
   unit: text('unit').notNull(),
+  dimension: text('dimension').default('default').notNull(),
   sourceStream: text('source_stream').notNull(), // 'raw' | 'reconciled'
   aggregation: text('aggregation').default('raw').notNull(),
   rawPayload: jsonb('raw_payload'),
@@ -41,11 +42,11 @@ export const metricEntries = pgTable('metric_entries', {
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
 }, (table) => ({
   rawStreamExternalIdIdx: uniqueIndex('raw_stream_external_id_idx')
-    .on(table.userId, table.provider, table.metricType, table.sourceStream, table.externalId),
+    .on(table.userId, table.provider, table.metricType, table.sourceStream, table.dimension, table.externalId),
   reconciledStreamIntervalIdx: uniqueIndex('reconciled_stream_interval_idx')
-    .on(table.userId, table.provider, table.metricType, table.sourceStream, table.startTime, table.endTime)
+    .on(table.userId, table.provider, table.metricType, table.sourceStream, table.dimension, table.startTime, table.endTime)
     .where(sql`source_stream = 'reconciled' OR external_id IS NULL`),
-  canonicalQueryIdx: index('canonical_query_idx').on(table.userId, table.metricType, table.startTime, table.endTime),
+  canonicalQueryIdx: index('canonical_query_idx').on(table.userId, table.metricType, table.dimension, table.startTime, table.endTime),
 }));
 
 export const syncRuns = pgTable('sync_runs', {

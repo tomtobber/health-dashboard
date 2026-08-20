@@ -15,6 +15,7 @@ describe('dbSchema verification', () => {
     expect(columns).toHaveProperty('valueNumeric');
     expect(columns).toHaveProperty('valueText');
     expect(columns).toHaveProperty('unit');
+    expect(columns).toHaveProperty('dimension');
     expect(columns).toHaveProperty('sourceStream');
     expect(columns).toHaveProperty('aggregation');
     expect(columns).toHaveProperty('rawPayload');

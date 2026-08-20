@@ -137,7 +137,10 @@ export async function executeSync(options: ExecuteSyncOptions): Promise<SyncExec
 
     if (isLiveDb && downsampledEntries.length > 0) {
       for (const entry of downsampledEntries) {
-        const externalId = entry.externalId || `gh_${entry.metricType}_${entry.startTime.getTime()}`;
+        const dimension = entry.dimension || 'default';
+        const externalId = entry.externalId || (dimension !== 'default'
+          ? `gh_${entry.metricType}_${dimension}_${entry.startTime.getTime()}`
+          : `gh_${entry.metricType}_${entry.startTime.getTime()}`);
         
         await db.insert(metricEntries).values({
           userId: entry.userId,
@@ -149,6 +152,7 @@ export async function executeSync(options: ExecuteSyncOptions): Promise<SyncExec
           valueNumeric: entry.valueNumeric,
           valueText: entry.valueText ?? null,
           unit: entry.unit,
+          dimension,
           sourceStream: entry.sourceStream,
           aggregation: entry.aggregation,
           rawPayload: entry.rawPayload,
@@ -159,6 +163,7 @@ export async function executeSync(options: ExecuteSyncOptions): Promise<SyncExec
             metricEntries.provider,
             metricEntries.metricType,
             metricEntries.sourceStream,
+            metricEntries.dimension,
             metricEntries.externalId,
           ],
           set: {

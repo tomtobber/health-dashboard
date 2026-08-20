@@ -43,6 +43,7 @@ export interface NormalizedMetricEntry {
   valueNumeric?: number;
   valueText?: string;
   unit: string;
+  dimension?: string;
   sourceStream: 'raw' | 'reconciled';
   aggregation: string;
   rawPayload?: Record<string, unknown>;
