@@ -206,4 +206,17 @@ describe('AppError JSON Serialization & Error Middleware Verification', () => {
     expect(error.context.fieldName).toBe('email');
     expect(error.context.count).toBe(1);
   });
+  test('logger serializeError recursively unpacks nested causes for structured logging', async () => {
+    const { serializeError } = await import('../src/utils/logger');
+    const rootCause = new Error('TCP connection reset');
+    const intermediateError = new Error('PostgreSQL driver error');
+    Object.defineProperty(intermediateError, 'cause', { value: rootCause });
+    const appErr = new DatabaseError('Transaction failed', { operation: 'commit' }, intermediateError);
+
+    const serialized = serializeError(appErr) as Record<string, unknown>;
+    expect(serialized.name).toBe('DatabaseError');
+    expect(serialized.message).toBe('Transaction failed');
+    expect((serialized.cause as any).message).toBe('PostgreSQL driver error');
+    expect((serialized.cause as any).cause.message).toBe('TCP connection reset');
+  });
 });

@@ -4,15 +4,40 @@ export interface LogContext extends Record<string, unknown> {
   error?: unknown;
 }
 
+export function serializeError(err: unknown): Record<string, unknown> | unknown {
+  if (!(err instanceof Error)) {
+    if (typeof err === 'object' && err !== null) {
+      return { ...(err as Record<string, unknown>) };
+    }
+    return err;
+  }
+
+  const errRecord = err as unknown as Record<string, unknown>;
+  const result: Record<string, unknown> = {
+    name: err.name,
+    message: err.message,
+    stack: err.stack,
+  };
+
+  if ('code' in errRecord && errRecord.code !== undefined) {
+    result.code = errRecord.code;
+  }
+  if ('statusCode' in errRecord && errRecord.statusCode !== undefined) {
+    result.statusCode = errRecord.statusCode;
+  }
+  if ('context' in errRecord && typeof errRecord.context === 'object' && errRecord.context !== null) {
+    result.context = errRecord.context;
+  }
+  if (err.cause !== undefined) {
+    result.cause = serializeError(err.cause);
+  }
+
+  return result;
+}
+
 export class Logger {
   private formatMessage(level: 'info' | 'warn' | 'error', message: string, context: LogContext = {}): string {
-    const errorObj = context.error as Record<string, unknown> | undefined;
-    const errorDetails = context.error instanceof Error ? {
-      name: context.error.name,
-      message: context.error.message,
-      stack: context.error.stack,
-      ...(typeof errorObj === 'object' && errorObj !== null && 'context' in errorObj ? (errorObj.context as Record<string, unknown>) : {}),
-    } : context.error;
+    const errorDetails = context.error !== undefined ? serializeError(context.error) : undefined;
 
     return JSON.stringify({
       timestamp: new Date().toISOString(),
