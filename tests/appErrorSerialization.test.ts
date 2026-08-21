@@ -214,9 +214,11 @@ describe('AppError JSON Serialization & Error Middleware Verification', () => {
     const appErr = new DatabaseError('Transaction failed', { operation: 'commit' }, intermediateError);
 
     const serialized = serializeError(appErr) as Record<string, unknown>;
+    const causeObj = serialized.cause as Record<string, unknown>;
+    const rootCauseObj = causeObj.cause as Record<string, unknown>;
     expect(serialized.name).toBe('DatabaseError');
     expect(serialized.message).toBe('Transaction failed');
-    expect((serialized.cause as any).message).toBe('PostgreSQL driver error');
-    expect((serialized.cause as any).cause.message).toBe('TCP connection reset');
+    expect(causeObj.message).toBe('PostgreSQL driver error');
+    expect(rootCauseObj.message).toBe('TCP connection reset');
   });
 });
