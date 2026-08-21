@@ -550,7 +550,7 @@ export class GoogleHealthAdapter implements ProviderAdapter {
   }
 
   public async sync(params: SyncParams): Promise<SyncResult> {
-    const metricTypes = params.metricTypes || ['steps', 'heart-rate', 'sleep', 'weight'];
+    const metricTypes = (params.metricTypes && params.metricTypes.length > 0) ? params.metricTypes : WEBHOOK_SUPPORTED_METRICS;
     const allEntries: NormalizedMetricEntry[] = [];
     const skippedMetrics: Array<{ metricType: string; status: number; reason: string }> = [];
     let pagesFetched = 0;
