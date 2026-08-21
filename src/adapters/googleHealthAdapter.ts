@@ -586,82 +586,104 @@ export class GoogleHealthAdapter implements ProviderAdapter {
             });
           }
         } else {
-          // Official Google Health REST v4 endpoint
+          // Official Google Health REST v4 endpoint with pagination support
           const isReconciled = params.sourceStream === 'reconciled' || kebabMetric === 'floors' || kebabMetric === 'calories-in-heart-rate-zone';
           const endpointSuffix = isReconciled ? ':reconcile' : '';
-          let url = `https://health.googleapis.com/v4/users/me/dataTypes/${kebabMetric}/dataPoints${endpointSuffix}`;
-          
-          // Official AIP-160 time filter format per metric category
+          const baseUrl = `https://health.googleapis.com/v4/users/me/dataTypes/${kebabMetric}/dataPoints${endpointSuffix}`;
           const filter = buildAip160Filter(kebabMetric, range.start, range.end);
-          if (filter) {
-            const queryParams = new URLSearchParams({ filter });
-            url += '?' + queryParams.toString();
-          }
 
-          const response = await fetchWithTimeout(url, {
-            method: 'GET',
-            headers: { 
-              Authorization: 'Bearer ' + params.accessToken,
-              Accept: 'application/json',
-            },
-            serviceName: 'GoogleHealthAPI',
-            timeoutMs: 10000,
-            retries: 2,
-          });
+          let pageToken: string | undefined = undefined;
+          let metricPageCount = 0;
+          const maxPagesPerWindow = 100;
 
-          if (!response.ok) {
-            const errText = await response.text();
+          do {
+            pagesFetched += 1;
+            metricPageCount += 1;
 
-            // Graceful skip for missing optional OAuth scopes (e.g. ECG), unsupported actions, or unbacked data types
-            const isMissingScope = response.status === 403 && (errText.includes('MISSING_OAUTH_SCOPE') || errText.includes('PERMISSION_DENIED') || errText.includes('Required OAuth scope'));
-            const isUnsupportedAction = response.status === 400 && (
-              errText.includes('UNSUPPORTED_DATA_TYPE_ACTION') ||
-              errText.includes('INVALID_PARENT_DATA_TYPE_COLLECTION') ||
-              errText.includes('is not supported') ||
-              errText.includes('Invalid data type ID')
-            );
-
-            if (isMissingScope || isUnsupportedAction) {
-              const reason = isMissingScope ? 'MISSING_OAUTH_SCOPE' : 'UNSUPPORTED_OR_INVALID_DATA_TYPE';
-              logger.warn('Skipping metric query due to missing scope or unsupported stream action', {
-                operation: 'googleHealthSync:skipMetric',
-                metricType: kebabMetric,
-                status: response.status,
-                reason,
-                userId: params.userId,
-              });
-              skippedMetrics.push({ metricType: kebabMetric, status: response.status, reason });
-              continue;
+            const queryParams = new URLSearchParams();
+            if (filter) {
+              queryParams.set('filter', filter);
+            }
+            queryParams.set('pageSize', '1000');
+            if (pageToken) {
+              queryParams.set('pageToken', pageToken);
             }
 
-            throw new ExternalServiceError('GoogleHealthAPI', errText, response.status, {
-              operation: 'sync',
-              metricType: kebabMetric,
-              userId: params.userId,
-              requestUrl: url,
+            const url = `${baseUrl}?${queryParams.toString()}`;
+
+            const response = await fetchWithTimeout(url, {
+              method: 'GET',
+              headers: { 
+                Authorization: 'Bearer ' + params.accessToken,
+                Accept: 'application/json',
+              },
+              serviceName: 'GoogleHealthAPI',
+              timeoutMs: 15000,
+              retries: 2,
             });
-          }
 
-          const body: unknown = await response.json();
-          let rawPoints: Record<string, unknown>[] = [];
-          if (typeof body === 'object' && body !== null) {
-            const b = body as Record<string, unknown>;
-            if (Array.isArray(b.dataPoints)) {
-              rawPoints = b.dataPoints as Record<string, unknown>[];
-            } else if (Array.isArray(b.points)) {
-              rawPoints = b.points as Record<string, unknown>[];
-            }
-          }
+            if (!response.ok) {
+              const errText = await response.text();
 
-          pointsFetched += rawPoints.length;
-          for (const pt of rawPoints) {
-            pt.userId = params.userId;
-            pt.metricType = kebabMetric;
-            if (params.sourceStream) {
-              pt.sourceStream = params.sourceStream;
+              // Graceful skip for missing optional OAuth scopes (e.g. ECG), unsupported actions, or unbacked data types
+              const isMissingScope = response.status === 403 && (errText.includes('MISSING_OAUTH_SCOPE') || errText.includes('PERMISSION_DENIED') || errText.includes('Required OAuth scope'));
+              const isUnsupportedAction = response.status === 400 && (
+                errText.includes('UNSUPPORTED_DATA_TYPE_ACTION') ||
+                errText.includes('INVALID_PARENT_DATA_TYPE_COLLECTION') ||
+                errText.includes('is not supported') ||
+                errText.includes('Invalid data type ID')
+              );
+
+              if (isMissingScope || isUnsupportedAction) {
+                const reason = isMissingScope ? 'MISSING_OAUTH_SCOPE' : 'UNSUPPORTED_OR_INVALID_DATA_TYPE';
+                logger.warn('Skipping metric query due to missing scope or unsupported stream action', {
+                  operation: 'googleHealthSync:skipMetric',
+                  metricType: kebabMetric,
+                  status: response.status,
+                  reason,
+                  userId: params.userId,
+                });
+                skippedMetrics.push({ metricType: kebabMetric, status: response.status, reason });
+                break;
+              }
+
+              throw new ExternalServiceError('GoogleHealthAPI', errText, response.status, {
+                operation: 'sync',
+                metricType: kebabMetric,
+                userId: params.userId,
+                requestUrl: url,
+              });
             }
-            allEntries.push(...this.mapToNormalizedSchema(pt));
-          }
+
+            const body: unknown = await response.json();
+            let rawPoints: Record<string, unknown>[] = [];
+            if (typeof body === 'object' && body !== null) {
+              const b = body as Record<string, unknown>;
+              if (Array.isArray(b.dataPoints)) {
+                rawPoints = b.dataPoints as Record<string, unknown>[];
+              } else if (Array.isArray(b.points)) {
+                rawPoints = b.points as Record<string, unknown>[];
+              }
+
+              if (typeof b.nextPageToken === 'string' && b.nextPageToken.trim()) {
+                pageToken = b.nextPageToken.trim();
+              } else {
+                pageToken = undefined;
+              }
+            } else {
+              pageToken = undefined;
+            }
+
+            pointsFetched += rawPoints.length;
+            for (const pt of rawPoints) {
+              pt.userId = params.userId;
+              pt.metricType = kebabMetric;
+              if (params.sourceStream) {
+                pt.sourceStream = params.sourceStream;
+              }
+              allEntries.push(...this.mapToNormalizedSchema(pt));
+            }
+          } while (pageToken && metricPageCount < maxPagesPerWindow);
         }
       }
     }
