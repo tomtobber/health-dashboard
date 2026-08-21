@@ -2,7 +2,7 @@ import { sql } from 'drizzle-orm';
 import { db } from '../db';
 import { syncRuns, metricEntries, connectedAccounts } from '../db/schema';
 import { eq, and, gte, lte, isNull, inArray } from 'drizzle-orm';
-import { GoogleHealthAdapter } from '../adapters/googleHealthAdapter';
+import { GoogleHealthAdapter, splitDateRange } from '../adapters/googleHealthAdapter';
 import { SyncParams, SyncResult, NormalizedMetricEntry } from '../adapters/baseAdapter';
 import { downsampleEntries } from './downsamplingService';
 import { encryptToken, decryptToken } from './cryptoService';
@@ -28,6 +28,41 @@ export interface SyncExecutionResult {
 export async function executeSync(options: ExecuteSyncOptions): Promise<SyncExecutionResult> {
   const providerName = options.provider || 'google_health';
   const adapter = new GoogleHealthAdapter();
+
+  const rangeDurationMs = options.endDate.getTime() - options.startDate.getTime();
+  const maxChunkMs = 14 * 24 * 60 * 60 * 1000;
+
+  // If date range is longer than 14 days, stream through 14-day sub-windows sequentially to prevent heap memory exhaustion
+  if (rangeDurationMs > maxChunkMs) {
+    const windows = splitDateRange(options.startDate, options.endDate, 14);
+    let cumulativePointsFetched = 0;
+    let cumulativePointsUpserted = 0;
+    let cumulativePagesFetched = 0;
+    let lastSyncRunId = '';
+
+    for (let i = 0; i < windows.length; i++) {
+      const win = windows[i];
+      const chunkResult = await executeSync({
+        ...options,
+        startDate: win.start,
+        endDate: win.end,
+      });
+
+      cumulativePointsFetched += chunkResult.pointsFetched;
+      cumulativePointsUpserted += chunkResult.pointsUpserted;
+      cumulativePagesFetched += chunkResult.pagesFetched;
+      lastSyncRunId = chunkResult.syncRunId;
+    }
+
+    return {
+      syncRunId: lastSyncRunId,
+      pointsFetched: cumulativePointsFetched,
+      pointsUpserted: cumulativePointsUpserted,
+      pagesFetched: cumulativePagesFetched,
+      status: 'completed',
+      entries: [],
+    };
+  }
 
   let syncRunId: string;
   try {
