@@ -762,6 +762,8 @@ export class GoogleHealthAdapter implements ProviderAdapter {
     const sourceStream: 'raw' | 'reconciled' = rawPoint.sourceStream === 'reconciled' ? 'reconciled' : 'raw';
     const aggregation = typeof rawPoint.aggregation === 'string' ? rawPoint.aggregation : 'raw';
 
+    const isHighFreq = metricType === 'heart-rate' || metricType === 'activity-level' || metricType === 'steps';
+
     const createEntry = (dimension: string, valueNumeric: number, unit: string, valueText?: string, extIdSuffix?: string): NormalizedMetricEntry => ({
       userId,
       provider: 'google_health',
@@ -775,7 +777,7 @@ export class GoogleHealthAdapter implements ProviderAdapter {
       dimension,
       sourceStream,
       aggregation,
-      rawPayload: rawPoint,
+      rawPayload: isHighFreq ? { metricType, time: startTime.toISOString(), val: valueNumeric, dim: dimension } : rawPoint,
     });
 
     const entries: NormalizedMetricEntry[] = [];
