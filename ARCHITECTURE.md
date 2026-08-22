@@ -35,10 +35,10 @@ invariants that enforce this.
    third-party data sources beyond Google Health (e.g. a calorie-tracking
    app), each plugging into the same sync + storage model via a common
    adapter interface.
-5. **Customizable charts & web app** *(complete)* — User-configurable dashboard:
-   pick metric(s), time range, aggregation, and chart type; save as named views
-   backed by `dashboard_views`. Multi-metric overlay frontend built in React +
-   Vite + Recharts.
+5. **Customizable charts** *(complete)* — User-configurable dashboard:
+   pick metric(s), time range, aggregation, and chart type; save as named
+   views. See `dashboard_views`, "Phase 5 Frontend & API Surface," and
+   "Multi-Metric Overlay Rendering" below for the implemented design.
 6. **Conclusions / insights** — Start with descriptive statistics only
    (personal baselines, trend detection, correlation between user-chosen
    metric pairs). Explicitly out of scope until this phase, and even then,
@@ -218,7 +218,7 @@ Postgres error code (`23505`) before mapping to `ValidationError`
 ("metric type already exists for this user") — any other DB error is
 logged and rethrown as a `DatabaseError`, not silently reattributed.
 
-**`value_type` and `unit` are locked** as
+`value_type` and `unit` are locked as
 soon as any `metric_entries` row references this definition — checked at
 the service layer (`EXISTS` query) before applying an update, not left to
 convention. Attempting to change either after that point is rejected as a
@@ -326,6 +326,114 @@ metrics.
   what the dashboard's multi-metric view actually calls.
 - Exposed over HTTP via `GET /api/metric-entries` (single or
   `metric_types=` batched) above.
+
+### `dashboard_views` (phase 5 — implemented)
+User-saved chart layouts, referencing metrics by `metric_type` string
+(both synced and custom — no FK, since a panel can reference a
+subsequently-deleted custom metric; see fallback behavior below).
+
+| column | notes |
+|---|---|
+| id | surrogate PK (uuid) |
+| user_id | FK to `users.id`, `ON DELETE CASCADE` |
+| name | display name; unique per `(user_id, name)` |
+| config | jsonb, see panel shape below |
+| created_at / updated_at | |
+
+**`config` shape**, validated with Zod at the API boundary
+(`TimeRangeSchema` as a discriminated union, not a single enum with an
+ambiguous `'custom'` value mixed into the relative branch):
+```ts
+{
+  panels: [
+    {
+      id: string,
+      metricTypes: string[],        // 1+, non-empty — overlay when >1
+      timeRange: { type: 'relative', value: 'last_24h' | 'last_7d' | 'last_30d' | 'last_90d' | 'last_1y' }
+               | { type: 'absolute', startTime: string, endTime: string },
+      aggregation: 'raw' | '1m_avg' | '5m_avg' | 'daily_avg',
+      chartType?: 'line' | 'bar'    // optional override; default inferred per-metric from valueType
+    }
+  ]
+}
+```
+
+**Relative time ranges are computed at render time, not frozen at save
+time** — a view saved as "last 7 days" always means up to now when
+reopened, not the 7 days that happened to be current when it was saved.
+
+**Ownership scoping**: every lookup (`get`/`update`/`delete`) is scoped by
+`user_id` in the query itself, not just by `id` — same pattern as
+`metric_definitions`, same reasoning: don't let one user enumerate or
+touch another's saved views. Not-found/unauthorized branches log
+structured context (`userId`, `viewId`, `operation`).
+
+**Unique-name collisions**: PG `23505` on `(user_id, name)` is narrowed
+and mapped to `ValidationError` on **both** create and rename-via-update
+— a rename that collides with an existing view name is rejected the same
+way a duplicate create is, not just the initial create path.
+
+**Deleted/missing metric reference in a panel**: since `metricTypes` is a
+plain string array with no FK, a panel can reference a custom metric
+that's since been hard-deleted (only possible for the zero-entries
+delete case). The enriched query returns an empty entries array with
+title-case fallback metadata for an unrecognized key rather than erroring
+the whole panel — the frontend shows a subtle "no entries found for
+`<metric>`" notice on that series without breaking the rest of an
+overlaid panel. An *archived* (not deleted) metric renders normally, same
+as any other historical query — `archived_at` never affects queryability.
+
+## Phase 5 Frontend & API Surface (customizable charts — implemented)
+
+**Frontend stack**: React 18 + Vite SPA in `client/`, Recharts for
+charting, served from the same Render service as the backend —
+`express.static(client/dist)` plus a pathless SPA fallback handler
+registered after all `/api/*` and `/health` routes (written
+Express-4/5-safe: no bare `app.get('*')`, which throws at startup under
+Express 5's `path-to-regexp` v6 — a fallback with no path, or a named
+wildcard, is used instead). Same-origin serving avoids any CORS
+configuration and keeps auth cookies working without cross-site
+complications.
+
+**Build pipeline**: root `"build"` runs `build:backend` (`tsc`) then
+`build:client` (`npm --prefix client run build`); `render.yaml`'s
+buildCommand installs both root and `client/` dependencies before
+running it. This was a real gap in the first draft of this phase's plan
+— worth remembering for any future additional frontend package, since
+Render's build step doesn't recurse into subdirectories on its own.
+
+**API surface**:
+- `POST /api/dashboard-views` — create; Zod-validated `config`.
+- `GET /api/dashboard-views` — list user's saved views.
+- `GET /api/dashboard-views/:id` — get one.
+- `PATCH /api/dashboard-views/:id` — update (rename and/or reconfigure
+  panels); same unique-name and ownership rules as create.
+- `DELETE /api/dashboard-views/:id` — delete.
+- **No new data-fetching endpoint** — rendering a view resolves each
+  panel's relative time range to absolute timestamps and calls the
+  existing Phase 3 batched enriched endpoint
+  (`GET /api/metric-entries?metric_types=a,b,c&start_time=...&end_time=...`)
+  per panel.
+
+## Multi-Metric Overlay Rendering (phase 5 — implemented)
+
+A single chart panel can overlay multiple metrics together (e.g. steps +
+heart rate), not just one metric per chart — this was a deliberate scope
+decision, not a default. Rendering rules, since mixed-`valueType`
+overlays are a legitimate case the API doesn't reject:
+- **Each metric gets its own Y-axis** (Recharts `yAxisId`), never a
+  shared axis — different metrics have incomparable scales/units.
+- **Numeric/duration metrics** render as lines/bars against their axis,
+  sharing one time-based X-axis across all series in the panel.
+- **Boolean metrics** render as event marker bands/pins along the
+  timeline, not a 0/1 line against a numeric axis.
+- **Category metrics** render as discrete colored event markers with
+  text labels, not a Y-value.
+- Hover tooltips are synchronized/unified across all active series in a
+  panel.
+- Chart type defaults per-metric from its `valueType` (via the enriched
+  query, same as the read layer above), with an optional per-panel
+  override (`line`/`bar`) for numeric/duration series.
 
 ## Data Volume & Resolution Strategy
 
@@ -784,4 +892,7 @@ the phase it affects:
   integration and extract the general interface once a second one exists
   stays open until an actual integration target is chosen. Revisit this
   question when (if) one is.
-- Frontend choice: web page vs. native app — Phase 5, next up.
+- **Resolved & implemented**: Frontend is a web page (React + Vite SPA),
+  served from the same Render service as the backend — see "Phase 5
+  Frontend & API Surface" above. Native app was considered and not
+  chosen.
