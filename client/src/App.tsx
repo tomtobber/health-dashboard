@@ -121,6 +121,21 @@ export const App: React.FC = () => {
     }
   };
 
+
+  const handleSeedDemoData = async () => {
+    setIsSyncing(true);
+    try {
+      await api.seedDemoData();
+      await loadUserData();
+      // Trigger a refreshed panel state by shallow copying
+      setPanels([...panels]);
+    } catch (err: unknown) {
+      console.error('Failed to seed demo data:', err);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const handleTriggerSync = async () => {
     setIsSyncing(true);
     try {
@@ -185,6 +200,8 @@ export const App: React.FC = () => {
             onEdit={() => setEditingPanel(panel)}
             onRemove={() => handleRemovePanel(panel.id)}
             onOpenAuth={() => setIsAuthOpen(true)}
+            onSeedDemo={handleSeedDemoData}
+            onOpenLog={() => setIsLogOpen(true)}
           />
         ))}
 

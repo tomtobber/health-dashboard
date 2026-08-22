@@ -36,6 +36,8 @@ interface MultiMetricPanelProps {
   onEdit: () => void;
   onRemove: () => void;
   onOpenAuth?: () => void;
+  onSeedDemo?: () => void;
+  onOpenLog?: () => void;
 }
 
 const SERIES_COLORS = [
@@ -49,7 +51,7 @@ const SERIES_COLORS = [
   '#14b8a6', // Teal
 ];
 
-export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user, onEdit, onRemove, onOpenAuth }) => {
+export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user, onEdit, onRemove, onOpenAuth, onSeedDemo, onOpenLog }) => {
   const [data, setData] = useState<EnrichedMetricQueryResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -272,9 +274,21 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
         )}
 
         {user && !loading && !error && chartData.length === 0 && discreteEvents.length === 0 && (
-          <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', gap: '0.5rem' }}>
-            <TrendingUp size={32} strokeWidth={1.5} />
+          <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', gap: '0.75rem' }}>
+            <TrendingUp size={32} strokeWidth={1.5} color="var(--text-muted)" />
             <span style={{ fontSize: '0.875rem' }}>No data points recorded for this time window.</span>
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
+              {onSeedDemo && (
+                <button className="btn btn-primary" style={{ fontSize: '0.8125rem', padding: '0.35rem 0.75rem' }} onClick={onSeedDemo}>
+                  ✨ Load 14-Day Sample Data
+                </button>
+              )}
+              {onOpenLog && (
+                <button className="btn btn-secondary" style={{ fontSize: '0.8125rem', padding: '0.35rem 0.75rem' }} onClick={onOpenLog}>
+                  + Log Entry
+                </button>
+              )}
+            </div>
           </div>
         )}
 

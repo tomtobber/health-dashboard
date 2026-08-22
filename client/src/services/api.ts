@@ -242,6 +242,12 @@ export const api = {
     return res.accounts || [];
   },
 
+  async seedDemoData(): Promise<{ success: boolean; count: number; message: string }> {
+    return request<{ success: boolean; count: number; message: string }>('/api/sync/seed-demo', {
+      method: 'POST',
+    });
+  },
+
   async triggerSync(trigger = 'manual'): Promise<{ status: string }> {
     return request<{ status: string }>('/api/sync/trigger', {
       method: 'POST',
