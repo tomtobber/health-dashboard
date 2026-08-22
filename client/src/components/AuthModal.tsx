@@ -14,6 +14,28 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onSuccess, onClose }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  
+  const handleDemoLogin = async () => {
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      try {
+        const res = await api.login('demo@example.com', 'password123');
+        onSuccess(res.user);
+        onClose();
+      } catch {
+        // If login fails (user does not exist yet), auto-register
+        const res = await api.register('demo@example.com', 'password123');
+        onSuccess(res.user);
+        onClose();
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Demo login failed');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -75,6 +97,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onSuccess, onClose }) => {
             />
           </div>
 
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ width: '100%', fontSize: '0.8125rem', borderColor: 'var(--accent-primary)', color: 'var(--accent-primary)' }}
+              disabled={isSubmitting}
+              onClick={handleDemoLogin}
+            >
+              🚀 Instant Demo Sign-In
+            </button>
+          </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem' }}>
             <button
               type="button"

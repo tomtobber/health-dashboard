@@ -31,8 +31,27 @@ app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Serve frontend static assets from client/dist if present
-const clientDistPath = path.join(__dirname, '../client/dist');
+// Multi-strategy resolution for frontend static assets
+const candidatePaths = [
+  path.join(__dirname, '../client/dist'),
+  path.resolve(process.cwd(), 'client/dist'),
+  path.join(__dirname, 'client/dist'),
+];
+
+let clientDistPath = candidatePaths[0];
+for (const p of candidatePaths) {
+  if (fs.existsSync(p)) {
+    clientDistPath = p;
+    break;
+  }
+}
+
+logger.info('Resolved frontend static asset path', {
+  clientDistPath,
+  exists: fs.existsSync(clientDistPath),
+  indexExists: fs.existsSync(path.join(clientDistPath, 'index.html')),
+});
+
 app.use(express.static(clientDistPath));
 
 // Express 4 & 5 safe pathless SPA fallback handler (registered strictly after all /api and /health routes)

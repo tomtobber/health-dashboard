@@ -1,3 +1,14 @@
+
+function formatTimestampSafely(val?: string | null, fmt = 'PPP p'): string {
+  if (!val) return '';
+  try {
+    const d = typeof val === 'string' ? parseISO(val) : new Date(val);
+    if (isNaN(d.getTime())) return String(val);
+    return format(d, fmt);
+  } catch {
+    return String(val);
+  }
+}
 import React, { useEffect, useState, useMemo } from 'react';
 import {
   DashboardPanelConfig,
@@ -299,7 +310,7 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
                       return (
                         <div className="custom-recharts-tooltip">
                           <p style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '4px' }}>
-                            {label ? format(parseISO(label), 'PPP p') : ''}
+                            {formatTimestampSafely(label)}
                           </p>
                           {payload.map((entry: any, i: number) => (
                             <p key={i} style={{ fontSize: '0.8125rem', color: entry.color, fontWeight: 600 }}>
@@ -355,7 +366,7 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
                       return (
                         <div className="custom-recharts-tooltip">
                           <p style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '4px' }}>
-                            {label ? format(parseISO(label), 'PPP p') : ''}
+                            {formatTimestampSafely(label)}
                           </p>
                           {payload.map((entry: any, i: number) => (
                             <p key={i} style={{ fontSize: '0.8125rem', color: entry.color, fontWeight: 600 }}>
