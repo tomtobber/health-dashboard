@@ -13,7 +13,8 @@
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "test": "jest --runInBand",
-    "test:subscriber-types": "tsx src/scripts/testAllDataTypes.ts"
+    "test:subscriber-types": "tsx src/scripts/testAllDataTypes.ts",
+    "db:migrate:phase3": "tsx src/scripts/migratePhase3.ts"
   },
   "keywords": [],
   "author": "",
