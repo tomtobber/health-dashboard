@@ -181,8 +181,10 @@ export const App: React.FC = () => {
           <MultiMetricPanel
             key={panel.id}
             panel={panel}
+            user={user}
             onEdit={() => setEditingPanel(panel)}
             onRemove={() => handleRemovePanel(panel.id)}
+            onOpenAuth={() => setIsAuthOpen(true)}
           />
         ))}
 

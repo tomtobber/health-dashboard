@@ -21,8 +21,10 @@ import { Settings, Trash2, AlertCircle, RefreshCw, TrendingUp } from 'lucide-rea
 
 interface MultiMetricPanelProps {
   panel: DashboardPanelConfig;
+  user: { id: string; email: string } | null;
   onEdit: () => void;
   onRemove: () => void;
+  onOpenAuth?: () => void;
 }
 
 const SERIES_COLORS = [
@@ -36,7 +38,7 @@ const SERIES_COLORS = [
   '#14b8a6', // Teal
 ];
 
-export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, onEdit, onRemove }) => {
+export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user, onEdit, onRemove, onOpenAuth }) => {
   const [data, setData] = useState<EnrichedMetricQueryResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -85,6 +87,11 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, onEdi
   }, [panel.timeRange]);
 
   const fetchData = async () => {
+    if (!user) {
+      setData([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -104,7 +111,7 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, onEdi
 
   useEffect(() => {
     fetchData();
-  }, [panel.metricTypes, startTimeStr, endTimeStr, panel.aggregation]);
+  }, [user?.id, panel.metricTypes, startTimeStr, endTimeStr, panel.aggregation]);
 
   // Separate metrics by valueType
   const numericMetrics = useMemo(() => data.filter((d) => d.valueType === 'numeric' || d.valueType === 'duration'), [data]);
@@ -240,7 +247,19 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, onEdi
           </div>
         )}
 
-        {!loading && !error && chartData.length === 0 && discreteEvents.length === 0 && (
+        {!user && (
+          <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', gap: '0.75rem' }}>
+            <TrendingUp size={32} strokeWidth={1.5} color="var(--accent-primary)" />
+            <span style={{ fontSize: '0.875rem' }}>Sign in to view real-time data & custom metrics</span>
+            {onOpenAuth && (
+              <button className="btn btn-primary" style={{ fontSize: '0.8125rem', padding: '0.35rem 0.75rem' }} onClick={onOpenAuth}>
+                Sign In / Demo
+              </button>
+            )}
+          </div>
+        )}
+
+        {user && !loading && !error && chartData.length === 0 && discreteEvents.length === 0 && (
           <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', gap: '0.5rem' }}>
             <TrendingUp size={32} strokeWidth={1.5} />
             <span style={{ fontSize: '0.875rem' }}>No data points recorded for this time window.</span>

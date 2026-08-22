@@ -20,8 +20,8 @@ export class ApiError extends Error {
 
 const DEFAULT_TIMEOUT_MS = 10000;
 
-function getToken(): string | null {
-  return localStorage.getItem('auth_token');
+export function getToken(): string | null {
+  return localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
 }
 
 export function setToken(token: string | null) {
@@ -50,6 +50,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     const response = await fetch(endpoint, {
       ...options,
       headers,
+      credentials: 'same-origin',
       signal: controller.signal,
     });
 
