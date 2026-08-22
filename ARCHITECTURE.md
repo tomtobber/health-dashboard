@@ -31,9 +31,10 @@ invariants that enforce this.
    stored in the same normalized model as synced data. See
    `metric_definitions`, "Phase 3 API Surface," and "Enriched Metric Read
    Layer" below for the implemented design.
-4. **Other integrations** — Support additional third-party data sources
-   beyond Google Health (e.g. a calorie-tracking app), each plugging into
-   the same sync + storage model via a common adapter interface.
+4. **Other integrations** *(deferred — see below)* — Support additional
+   third-party data sources beyond Google Health (e.g. a calorie-tracking
+   app), each plugging into the same sync + storage model via a common
+   adapter interface.
 5. **Customizable charts** — User-configurable dashboard: pick metric(s),
    time range, aggregation, and chart type; save as named views.
 6. **Conclusions / insights** — Start with descriptive statistics only
@@ -182,7 +183,7 @@ existing table, everything else is additive.
 | user_id | FK to `users.id`, `ON DELETE CASCADE` |
 | metric_type | user-chosen key, unique per `(user_id, metric_type)`; must not collide with reserved provider metric-type strings |
 | display_name | human-readable label shown in UI; the only field editable after entries exist (see below) |
-| value_type | enum: `numeric` \| `duration` \| `boolean` \| `category` |
+| value_type | enum: `numeric` | `duration` | `boolean` | `category` |
 | unit | required for `numeric`/`duration`; null for `boolean`/`category` |
 | category_values | jsonb array of allowed labels; only used when `value_type = 'category'` |
 | archived_at | nullable; soft "retire," see below |
@@ -215,7 +216,7 @@ Postgres error code (`23505`) before mapping to `ValidationError`
 ("metric type already exists for this user") — any other DB error is
 logged and rethrown as a `DatabaseError`, not silently reattributed.
 
-`value_type` and `unit` are locked as
+**`value_type` and `unit` are locked** as
 soon as any `metric_entries` row references this definition — checked at
 the service layer (`EXISTS` query) before applying an update, not left to
 convention. Attempting to change either after that point is rejected as a
@@ -773,6 +774,12 @@ the phase it affects:
   adapter treatment, API surface, and the enriched read layer closing out
   Architecture Principle 5 for custom metrics — see `metric_definitions`,
   "Phase 3 API Surface," and "Enriched Metric Read Layer" above.
-- Whether phase 4's adapter interface should be generalized now or
-  hardcoded for 1–2 known integrations first — Phase 4.
-- Frontend choice: web page vs. native app — Phase 5.
+- **Deferred, not answered**: Phase 4 (other integrations) is on hold
+  indefinitely — no second data source is currently planned, so there's
+  nothing concrete to design the adapter generalization against yet.
+  Decision explicitly postponed rather than forced: whether to generalize
+  the adapter interface up front or hardcode around a first concrete
+  integration and extract the general interface once a second one exists
+  stays open until an actual integration target is chosen. Revisit this
+  question when (if) one is.
+- Frontend choice: web page vs. native app — Phase 5, next up.
