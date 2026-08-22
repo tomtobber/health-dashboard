@@ -67,24 +67,6 @@ export function filterReconciledOverRaw(entries: MetricEntryWithDelete[]): Norma
 }
 
 export async function queryMetricEntriesFromDb(filter: MetricQueryFilter): Promise<NormalizedMetricEntry[]> {
-  const isLiveDb = process.env.NODE_ENV !== 'test' || Boolean(process.env.DATABASE_URL?.includes('neon.tech'));
-
-  if (!isLiveDb) {
-    return filterReconciledOverRaw([
-      {
-        userId: filter.userId,
-        provider: 'google_health',
-        metricType: filter.metricType,
-        startTime: filter.startTime,
-        endTime: filter.endTime,
-        valueNumeric: 75,
-        unit: 'bpm',
-        sourceStream: 'reconciled',
-        aggregation: filter.aggregation || '1m_avg',
-      },
-    ]);
-  }
-
   try {
     const whereConditions = [
       eq(metricEntries.userId, filter.userId),
@@ -141,23 +123,6 @@ export async function queryMetricEntriesFromDb(filter: MetricQueryFilter): Promi
  * without filtering out archived definitions (allowing historical chart rendering).
  */
 export async function queryEnrichedMetricEntries(filter: MetricQueryFilter): Promise<EnrichedMetricQueryResult> {
-  const isLiveDb = process.env.NODE_ENV !== 'test' || Boolean(process.env.DATABASE_URL?.includes('neon.tech'));
-
-  if (!isLiveDb) {
-    const canonical = getCanonicalProviderMetricMetadata(filter.metricType);
-    const rawEntries = await queryMetricEntriesFromDb(filter);
-    return {
-      metricType: filter.metricType,
-      displayName: canonical.displayName,
-      valueType: canonical.valueType,
-      unit: canonical.unit,
-      categoryValues: canonical.categoryValues || null,
-      isCustom: false,
-      isArchived: false,
-      entries: rawEntries,
-    };
-  }
-
   try {
     // 1. Look up metric definition WITHOUT filtering out archived_at
     const [def] = await db
@@ -224,23 +189,6 @@ export async function queryBatchEnrichedMetrics(filter: BatchMetricQueryFilter):
       userId,
       metricTypes,
     });
-  }
-
-  const isLiveDb = process.env.NODE_ENV !== 'test' || Boolean(process.env.DATABASE_URL?.includes('neon.tech'));
-
-  if (!isLiveDb) {
-    return Promise.all(
-      metricTypes.map((mt) =>
-        queryEnrichedMetricEntries({
-          userId,
-          metricType: mt,
-          startTime,
-          endTime,
-          dimension,
-          aggregation,
-        })
-      )
-    );
   }
 
   try {

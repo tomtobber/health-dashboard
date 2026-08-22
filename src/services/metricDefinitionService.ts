@@ -1,9 +1,9 @@
 import { db } from '../db';
 import { metricDefinitions, metricEntries } from '../db/schema';
-import { eq, and, isNull, sql } from 'drizzle-orm';
+import { and, eq, count, isNull } from 'drizzle-orm';
 import { ValidationError, NotFoundError, DatabaseError } from '../errors/AppError';
-import { isReservedMetricType } from '../adapters/manualEntryAdapter';
 import { logger } from '../utils/logger';
+import { isReservedMetricType } from '../adapters/manualEntryAdapter';
 
 export type MetricValueType = 'numeric' | 'duration' | 'boolean' | 'category';
 
@@ -40,117 +40,165 @@ export interface MetricDefinitionRecord {
 
 const KEBAB_CASE_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-export function validateMetricTypeFormat(metricType: string, userId: string): void {
-  if (!metricType || typeof metricType !== 'string' || metricType.length < 2 || metricType.length > 50 || !KEBAB_CASE_REGEX.test(metricType)) {
+
+export function validateMetricTypeFormat(metricType: string, _userId?: string): void {
+  validateMetricType(metricType);
+}
+
+export function validateCategoryValues(
+  categoryValues: string[] | null | undefined,
+  _userId?: string,
+  _metricType?: string
+): string[] {
+  if (!categoryValues || !Array.isArray(categoryValues) || categoryValues.length === 0) {
+    throw new ValidationError('category_values must be a non-empty array of strings', {
+      operation: 'validateCategoryValues',
+    });
+  }
+
+  const cleaned = categoryValues
+    .filter((v) => typeof v === 'string' && v.trim().length > 0)
+    .map((v) => v.trim());
+
+  if (cleaned.length === 0) {
+    throw new ValidationError('category_values cannot be empty after trimming whitespace', {
+      operation: 'validateCategoryValues',
+    });
+  }
+
+  const lowerSet = new Set<string>();
+  for (const item of cleaned) {
+    const lower = item.toLowerCase();
+    if (lowerSet.has(lower)) {
+      throw new ValidationError(`Duplicate category value found: '${item}'`, {
+        operation: 'validateCategoryValues',
+        duplicate: item,
+      });
+    }
+    lowerSet.add(lower);
+  }
+
+  return cleaned;
+}
+
+export function validateMetricType(metricType: string): void {
+  if (!metricType || typeof metricType !== 'string') {
+    throw new ValidationError('metric_type is required and must be a non-empty string', {
+      operation: 'validateMetricType',
+      metricType,
+    });
+  }
+
+  const trimmed = metricType.trim();
+
+  if (trimmed.length < 2 || trimmed.length > 50) {
     throw new ValidationError(
-      "Metric type must be in kebab-case format (lowercase letters, numbers, and hyphens only, e.g. 'water-intake' or 'caffeine-mg')",
-      { operation: 'validateMetricTypeFormat', userId, metricType }
+      `metric_type must be between 2 and 50 characters in length. Received '${trimmed}' (${trimmed.length} chars)`,
+      { operation: 'validateMetricType', metricType: trimmed, length: trimmed.length }
     );
   }
 
-  if (isReservedMetricType(metricType)) {
+  if (!KEBAB_CASE_REGEX.test(trimmed)) {
     throw new ValidationError(
-      `Metric type '${metricType}' is reserved by a system provider`,
-      { operation: 'validateMetricTypeFormat', userId, metricType }
+      `metric_type must follow strict kebab-case (lowercase alphanumeric characters separated by single hyphens, e.g. 'coffee-cups', 'alcohol-units'). Received '${trimmed}'`,
+      { operation: 'validateMetricType', metricType: trimmed }
+    );
+  }
+
+  if (isReservedMetricType(trimmed)) {
+    throw new ValidationError(
+      `metric_type '${trimmed}' is a reserved provider keyword and cannot be used as a custom metric name.`,
+      { operation: 'validateMetricType', metricType: trimmed }
     );
   }
 }
 
-export function validateCategoryValues(categoryValues: unknown, userId: string, operation: string): string[] {
-  if (!Array.isArray(categoryValues) || categoryValues.length === 0) {
-    throw new ValidationError(
-      'Category values must be a non-empty array of strings',
-      { operation, userId, categoryValues }
-    );
-  }
-
-  const trimmedValues: string[] = [];
-  const seen = new Set<string>();
-
-  for (const item of categoryValues) {
-    if (typeof item !== 'string' || item.trim().length === 0) {
-      throw new ValidationError(
-        'Each category value must be a non-empty string',
-        { operation, userId, categoryValues }
-      );
-    }
-    const trimmed = item.trim();
-    if (seen.has(trimmed.toLowerCase())) {
-      throw new ValidationError(
-        `Duplicate category value '${trimmed}' is not allowed`,
-        { operation, userId, categoryValues }
-      );
-    }
-    seen.add(trimmed.toLowerCase());
-    trimmedValues.push(trimmed);
-  }
-
-  return trimmedValues;
-}
-
-export async function createMetricDefinition(params: CreateMetricDefinitionParams, txClient?: typeof db): Promise<MetricDefinitionRecord> {
+export async function createMetricDefinition(
+  params: CreateMetricDefinitionParams,
+  txClient?: typeof db
+): Promise<MetricDefinitionRecord> {
   const client = txClient || db;
   const { userId, metricType, displayName, valueType } = params;
 
-  validateMetricTypeFormat(metricType, userId);
+  validateMetricType(metricType);
 
   if (!displayName || typeof displayName !== 'string' || displayName.trim().length === 0) {
-    throw new ValidationError('Display name is required', { operation: 'createMetricDefinition', userId });
+    throw new ValidationError('display_name is required and must not be empty', {
+      operation: 'createMetricDefinition',
+      userId,
+      displayName,
+    });
   }
 
   const validTypes: MetricValueType[] = ['numeric', 'duration', 'boolean', 'category'];
   if (!validTypes.includes(valueType)) {
     throw new ValidationError(
-      `Invalid value type '${valueType}'. Must be one of: ${validTypes.join(', ')}`,
+      `Invalid value_type '${valueType}'. Allowed types: ${validTypes.join(', ')}`,
       { operation: 'createMetricDefinition', userId, valueType }
     );
   }
 
   let finalUnit: string | null = null;
-  if (valueType === 'numeric' || valueType === 'duration') {
+  let finalCategoryValues: string[] | null = null;
+
+  if (valueType === 'numeric') {
     if (!params.unit || typeof params.unit !== 'string' || params.unit.trim().length === 0) {
-      throw new ValidationError(
-        `Unit is required for ${valueType} metrics`,
-        { operation: 'createMetricDefinition', userId, valueType }
-      );
+      throw new ValidationError(`unit is required for numeric metric '${metricType}'`, {
+        operation: 'createMetricDefinition',
+        userId,
+        metricType,
+        valueType,
+      });
     }
     finalUnit = params.unit.trim();
-  } else {
-    if (params.unit && typeof params.unit === 'string' && params.unit.trim().length > 0) {
+  } else if (valueType === 'duration') {
+    finalUnit = params.unit ? params.unit.trim() : 'seconds';
+  } else if (valueType === 'boolean') {
+    if (params.unit !== undefined && params.unit !== null && String(params.unit).trim().length > 0) {
+      throw new ValidationError(`unit is not allowed when value_type is 'boolean'`, {
+        operation: 'createMetricDefinition',
+        userId,
+        valueType,
+      });
+    }
+    finalUnit = null;
+    if (params.categoryValues && params.categoryValues.length > 0) {
+      throw new ValidationError(`category_values are not allowed when value_type is 'boolean'`, {
+        operation: 'createMetricDefinition',
+        userId,
+        valueType,
+      });
+    }
+  } else if (valueType === 'category') {
+    if (params.unit !== undefined && params.unit !== null && String(params.unit).trim().length > 0) {
+      throw new ValidationError(`unit is not allowed when value_type is 'category'`, {
+        operation: 'createMetricDefinition',
+        userId,
+        valueType,
+      });
+    }
+    finalUnit = null;
+    if (!params.categoryValues || !Array.isArray(params.categoryValues) || params.categoryValues.length === 0) {
       throw new ValidationError(
-        `Unit must be null or omitted for ${valueType} metrics`,
-        { operation: 'createMetricDefinition', userId, valueType, unit: params.unit }
+        `category_values must be a non-empty array of strings for category metric '${metricType}'`,
+        { operation: 'createMetricDefinition', userId, metricType, valueType }
       );
     }
-  }
 
-  let finalCategoryValues: string[] | null = null;
-  if (valueType === 'category') {
-    finalCategoryValues = validateCategoryValues(params.categoryValues, userId, 'createMetricDefinition');
-  } else {
-    if (params.categoryValues && Array.isArray(params.categoryValues) && params.categoryValues.length > 0) {
+    const cleaned = params.categoryValues
+      .filter((v) => typeof v === 'string' && v.trim().length > 0)
+      .map((v) => v.trim());
+
+    const deduplicated = Array.from(new Set(cleaned));
+
+    if (deduplicated.length === 0) {
       throw new ValidationError(
-        `Category values are only allowed when value_type is 'category'`,
-        { operation: 'createMetricDefinition', userId, valueType }
+        `category_values cannot be empty after trimming whitespace`,
+        { operation: 'createMetricDefinition', userId, metricType }
       );
     }
-  }
 
-  const isLiveDb = process.env.NODE_ENV !== 'test' || Boolean(process.env.DATABASE_URL?.includes('neon.tech'));
-
-  if (!isLiveDb) {
-    return {
-      id: 'mock_def_' + Date.now(),
-      userId,
-      metricType,
-      displayName: displayName.trim(),
-      valueType,
-      unit: finalUnit,
-      categoryValues: finalCategoryValues,
-      archivedAt: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+    finalCategoryValues = deduplicated;
   }
 
   try {
@@ -188,274 +236,182 @@ export async function createMetricDefinition(params: CreateMetricDefinitionParam
   } catch (err: unknown) {
     const rawErr = err as { code?: string; cause?: { code?: string } };
     const pgCode = rawErr?.code || rawErr?.cause?.code;
+
     if (pgCode === '23505') {
-      logger.warn('Metric definition unique constraint collision', {
+      logger.warn('Unique constraint violation on metric_definitions (23505)', {
         operation: 'createMetricDefinition',
         userId,
         metricType,
       });
       throw new ValidationError(
-        `A metric definition with metric_type '${metricType}' already exists for this user`,
-        { operation: 'createMetricDefinition', userId, metricType }
+        `Metric type '${metricType}' already exists for this user.`,
+        { operation: 'createMetricDefinition', userId, metricType, code: '23505' }
       );
     }
 
-    logger.error('Failed to insert metric definition into database', {
+    logger.error('Failed to create metric definition', {
       operation: 'createMetricDefinition',
       userId,
       metricType,
-      error: err instanceof Error ? err.message : String(err),
+      cause: err instanceof Error ? err.message : String(err),
     });
+
     throw new DatabaseError(
-      'Failed to insert metric definition into database',
-      { operation: 'createMetricDefinition', userId, metricType, cause: err instanceof Error ? err.message : String(err) },
+      'Failed to create metric definition',
+      {
+        operation: 'createMetricDefinition',
+        userId,
+        metricType,
+        cause: err instanceof Error ? err.message : String(err),
+      },
       err
     );
   }
 }
 
-export async function getMetricDefinition(id: string, userId: string): Promise<MetricDefinitionRecord> {
-  const isLiveDb = process.env.NODE_ENV !== 'test' || Boolean(process.env.DATABASE_URL?.includes('neon.tech'));
+export async function updateMetricDefinition(
+  params: UpdateMetricDefinitionParams
+): Promise<MetricDefinitionRecord> {
+  const { id, userId, displayName, valueType, unit, categoryValues } = params;
 
-  if (!isLiveDb) {
-    return {
+  const [existing] = await db
+    .select()
+    .from(metricDefinitions)
+    .where(and(eq(metricDefinitions.id, id), eq(metricDefinitions.userId, userId)));
+
+  if (!existing) {
+    throw new NotFoundError('Metric definition not found or unauthorized', {
+      operation: 'updateMetricDefinition',
       id,
       userId,
-      metricType: 'water-intake',
-      displayName: 'Water Intake',
-      valueType: 'numeric',
-      unit: 'ml',
-      categoryValues: null,
-      archivedAt: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+    });
   }
 
-  try {
-    const [found] = await db
-      .select()
-      .from(metricDefinitions)
-      .where(and(eq(metricDefinitions.id, id), eq(metricDefinitions.userId, userId)));
+  const [entryCountRow] = await db
+    .select({ total: count() })
+    .from(metricEntries)
+    .where(
+      and(
+        eq(metricEntries.userId, userId),
+        eq(metricEntries.metricType, existing.metricType),
+        isNull(metricEntries.deletedAt)
+      )
+    );
 
-    if (!found) {
-      throw new NotFoundError(`Metric definition with id '${id}' not found`, {
-        operation: 'getMetricDefinition',
-        id,
-        userId,
-      });
-    }
+  const hasEntries = (entryCountRow?.total || 0) > 0;
 
-    return {
-      id: found.id,
-      userId: found.userId,
-      metricType: found.metricType,
-      displayName: found.displayName,
-      valueType: found.valueType as MetricValueType,
-      unit: found.unit,
-      categoryValues: found.categoryValues,
-      archivedAt: found.archivedAt,
-      createdAt: found.createdAt,
-      updatedAt: found.updatedAt,
-    };
-  } catch (err: unknown) {
-    if (err instanceof NotFoundError) throw err;
-    throw new DatabaseError('Failed to get metric definition', {
-      operation: 'getMetricDefinition',
-      id,
-      userId,
-      cause: err instanceof Error ? err.message : String(err),
-    }, err);
-  }
-}
-
-export async function listMetricDefinitions(userId: string, includeArchived: boolean = false): Promise<MetricDefinitionRecord[]> {
-  const isLiveDb = process.env.NODE_ENV !== 'test' || Boolean(process.env.DATABASE_URL?.includes('neon.tech'));
-
-  if (!isLiveDb) {
-    return [
-      {
-        id: 'mock_def_1',
-        userId,
-        metricType: 'water-intake',
-        displayName: 'Water Intake',
-        valueType: 'numeric',
-        unit: 'ml',
-        categoryValues: null,
-        archivedAt: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-    ];
-  }
-
-  try {
-    const conditions = [eq(metricDefinitions.userId, userId)];
-    if (!includeArchived) {
-      conditions.push(isNull(metricDefinitions.archivedAt));
-    }
-
-    const rows = await db
-      .select()
-      .from(metricDefinitions)
-      .where(and(...conditions))
-      .orderBy(metricDefinitions.displayName);
-
-    return rows.map((r) => ({
-      id: r.id,
-      userId: r.userId,
-      metricType: r.metricType,
-      displayName: r.displayName,
-      valueType: r.valueType as MetricValueType,
-      unit: r.unit,
-      categoryValues: r.categoryValues,
-      archivedAt: r.archivedAt,
-      createdAt: r.createdAt,
-      updatedAt: r.updatedAt,
-    }));
-  } catch (err: unknown) {
-    throw new DatabaseError('Failed to list metric definitions', {
-      operation: 'listMetricDefinitions',
-      userId,
-      cause: err instanceof Error ? err.message : String(err),
-    }, err);
-  }
-}
-
-export async function updateMetricDefinition(params: UpdateMetricDefinitionParams): Promise<MetricDefinitionRecord> {
-  const { id, userId } = params;
-  const existing = await getMetricDefinition(id, userId);
-
-  const isLiveDb = process.env.NODE_ENV !== 'test' || Boolean(process.env.DATABASE_URL?.includes('neon.tech'));
-
-  if (!isLiveDb) {
-    return {
-      ...existing,
-      displayName: params.displayName ? params.displayName.trim() : existing.displayName,
-      unit: params.unit !== undefined ? params.unit : existing.unit,
-      valueType: params.valueType || existing.valueType,
-      categoryValues: params.categoryValues !== undefined ? params.categoryValues : existing.categoryValues,
-      updatedAt: new Date(),
-    };
-  }
-
-  // Check if caller is attempting to modify valueType or unit
-  const wantsValueTypeChange = params.valueType !== undefined && params.valueType !== existing.valueType;
-  const wantsUnitChange = params.unit !== undefined && params.unit !== existing.unit;
-
-  if (wantsValueTypeChange || wantsUnitChange) {
-    // Check if entries exist referencing this metricType
-    const [entryCheck] = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(metricEntries)
-      .where(and(eq(metricEntries.userId, userId), eq(metricEntries.metricType, existing.metricType)));
-
-    const entryCount = entryCheck?.count || 0;
-    if (entryCount > 0) {
-      logger.warn('Attempted modification of locked definition schema', {
+  if (hasEntries) {
+    if (valueType !== undefined && valueType !== existing.valueType) {
+      logger.warn('Attempted to modify locked value_type on metric definition with existing entries', {
         operation: 'updateMetricDefinition',
         userId,
-        id,
+        definitionId: id,
         metricType: existing.metricType,
-        attemptedValueType: params.valueType,
-        attemptedUnit: params.unit,
-        entryCount,
+        currentValueType: existing.valueType,
+        attemptedValueType: valueType,
+        entryCount: entryCountRow?.total,
       });
       throw new ValidationError(
-        `Cannot modify ${wantsValueTypeChange ? 'value_type' : ''}${wantsValueTypeChange && wantsUnitChange ? ' or ' : ''}${wantsUnitChange ? 'unit' : ''} once metric entries exist`,
+        `Cannot change value_type on metric '${existing.metricType}' because ${entryCountRow?.total} metric entries already exist. Only display_name can be changed after entries exist.`,
         {
           operation: 'updateMetricDefinition',
           userId,
-          id,
+          definitionId: id,
           metricType: existing.metricType,
-          entryCount,
         }
       );
     }
-  }
 
-  let finalDisplayName = existing.displayName;
-  if (params.displayName !== undefined) {
-    if (typeof params.displayName !== 'string' || params.displayName.trim().length === 0) {
-      throw new ValidationError('Display name cannot be empty', { operation: 'updateMetricDefinition', userId, id });
+    if (unit !== undefined && unit !== existing.unit) {
+      logger.warn('Attempted to modify locked unit on metric definition with existing entries', {
+        operation: 'updateMetricDefinition',
+        userId,
+        definitionId: id,
+        metricType: existing.metricType,
+        currentUnit: existing.unit,
+        attemptedUnit: unit,
+        entryCount: entryCountRow?.total,
+      });
+      throw new ValidationError(
+        `Cannot change unit on metric '${existing.metricType}' because ${entryCountRow?.total} metric entries already exist. Only display_name can be changed after entries exist.`,
+        {
+          operation: 'updateMetricDefinition',
+          userId,
+          definitionId: id,
+          metricType: existing.metricType,
+        }
+      );
     }
-    finalDisplayName = params.displayName.trim();
-  }
 
-  let finalValueType = existing.valueType;
-  if (params.valueType !== undefined) {
-    const validTypes: MetricValueType[] = ['numeric', 'duration', 'boolean', 'category'];
-    if (!validTypes.includes(params.valueType)) {
-      throw new ValidationError(`Invalid value type '${params.valueType}'`, { operation: 'updateMetricDefinition', userId, id });
-    }
-    finalValueType = params.valueType;
-  }
+    if (categoryValues !== undefined && existing.valueType === 'category') {
+      const activeEntries = await db
+        .select({ valueText: metricEntries.valueText })
+        .from(metricEntries)
+        .where(
+          and(
+            eq(metricEntries.userId, userId),
+            eq(metricEntries.metricType, existing.metricType),
+            isNull(metricEntries.deletedAt)
+          )
+        );
 
-  let finalUnit = existing.unit;
-  if (params.unit !== undefined) {
-    if (finalValueType === 'numeric' || finalValueType === 'duration') {
-      if (!params.unit || typeof params.unit !== 'string' || params.unit.trim().length === 0) {
-        throw new ValidationError(`Unit is required for ${finalValueType} metrics`, { operation: 'updateMetricDefinition', userId, id });
-      }
-      finalUnit = params.unit.trim();
-    } else {
-      if (params.unit && typeof params.unit === 'string' && params.unit.trim().length > 0) {
-        throw new ValidationError(`Unit must be null for ${finalValueType} metrics`, { operation: 'updateMetricDefinition', userId, id });
-      }
-      finalUnit = null;
-    }
-  }
+      const inUseCategories = new Set(
+        activeEntries.map((e) => e.valueText).filter((v): v is string => Boolean(v))
+      );
 
-  let finalCategoryValues = existing.categoryValues;
-  if (params.categoryValues !== undefined) {
-    if (finalValueType === 'category') {
-      const validatedNewCategories = validateCategoryValues(params.categoryValues, userId, 'updateMetricDefinition');
-      
-      // If categories already exist and entries exist, verify none of the removed categories are in use
-      if (existing.categoryValues && existing.categoryValues.length > 0) {
-        const newCatSet = new Set(validatedNewCategories.map((c) => c.toLowerCase()));
-        const removedCategories = existing.categoryValues.filter((c) => !newCatSet.has(c.toLowerCase()));
-
-        if (removedCategories.length > 0) {
-          const usedEntries = await db
-            .select({ valueText: metricEntries.valueText })
-            .from(metricEntries)
-            .where(
-              and(
-                eq(metricEntries.userId, userId),
-                eq(metricEntries.metricType, existing.metricType),
-                isNull(metricEntries.deletedAt)
-              )
-            );
-
-          const inUseValues = new Set(usedEntries.map((e) => e.valueText?.toLowerCase()).filter(Boolean));
-          const blockedCategories = removedCategories.filter((c) => inUseValues.has(c.toLowerCase()));
-
-          if (blockedCategories.length > 0) {
-            logger.warn('Category removal blocked: category values are currently in use by existing entries', {
+      const newCategoryList = (categoryValues || []).map((c) => c.trim().toLowerCase());
+      for (const inUse of Array.from(inUseCategories)) {
+        if (!newCategoryList.includes(inUse.toLowerCase())) {
+          logger.warn('Attempted to remove in-use category from category definition', {
+            operation: 'updateMetricDefinition',
+            userId,
+            definitionId: id,
+            metricType: existing.metricType,
+            removedCategory: inUse,
+          });
+          throw new ValidationError(
+            `Cannot remove category '${inUse}' because existing entries currently use this label.`,
+            {
               operation: 'updateMetricDefinition',
               userId,
-              id,
+              definitionId: id,
               metricType: existing.metricType,
-              blockedCategories,
-            });
-            throw new ValidationError(
-              `Cannot remove category values currently in use: ${blockedCategories.join(', ')}`,
-              {
-                operation: 'updateMetricDefinition',
-                userId,
-                id,
-                metricType: existing.metricType,
-                blockedCategories,
-              }
-            );
-          }
+              inUseCategory: inUse,
+            }
+          );
         }
       }
-      finalCategoryValues = validatedNewCategories;
-    } else {
-      finalCategoryValues = null;
     }
+  }
+
+  const finalDisplayName = displayName !== undefined ? displayName.trim() : existing.displayName;
+  if (!finalDisplayName) {
+    throw new ValidationError('display_name cannot be empty', {
+      operation: 'updateMetricDefinition',
+      userId,
+      id,
+    });
+  }
+
+  let finalValueType = existing.valueType as MetricValueType;
+  let finalUnit = existing.unit;
+  let finalCategoryValues = existing.categoryValues;
+
+  if (!hasEntries) {
+    if (valueType !== undefined) {
+      finalValueType = valueType;
+    }
+    if (unit !== undefined) {
+      finalUnit = unit;
+    }
+    if (categoryValues !== undefined) {
+      finalCategoryValues = categoryValues;
+    }
+  } else if (categoryValues !== undefined && existing.valueType === 'category') {
+    const cleaned = (categoryValues || [])
+      .filter((v) => typeof v === 'string' && v.trim().length > 0)
+      .map((v) => v.trim());
+    finalCategoryValues = Array.from(new Set(cleaned));
   }
 
   try {
@@ -474,7 +430,7 @@ export async function updateMetricDefinition(params: UpdateMetricDefinitionParam
     logger.info('Metric definition updated successfully', {
       operation: 'updateMetricDefinition',
       userId,
-      id,
+      definitionId: id,
       metricType: updated.metricType,
     });
 
@@ -492,29 +448,53 @@ export async function updateMetricDefinition(params: UpdateMetricDefinitionParam
     };
   } catch (err: unknown) {
     if (err instanceof ValidationError || err instanceof NotFoundError) throw err;
-    throw new DatabaseError('Failed to update metric definition', {
-      operation: 'updateMetricDefinition',
-      id,
-      userId,
-      cause: err instanceof Error ? err.message : String(err),
-    }, err);
+    throw new DatabaseError(
+      'Failed to update metric definition',
+      {
+        operation: 'updateMetricDefinition',
+        id,
+        userId,
+        cause: err instanceof Error ? err.message : String(err),
+      },
+      err
+    );
   }
 }
 
-export async function archiveMetricDefinition(id: string, userId: string): Promise<MetricDefinitionRecord> {
-  const existing = await getMetricDefinition(id, userId);
+export async function archiveMetricDefinition(
+  id: string,
+  userId: string
+): Promise<MetricDefinitionRecord> {
+  const [existing] = await db
+    .select()
+    .from(metricDefinitions)
+    .where(and(eq(metricDefinitions.id, id), eq(metricDefinitions.userId, userId)));
 
-  const isLiveDb = process.env.NODE_ENV !== 'test' || Boolean(process.env.DATABASE_URL?.includes('neon.tech'));
-  if (!isLiveDb) {
+  if (!existing) {
+    throw new NotFoundError('Metric definition not found or unauthorized', {
+      operation: 'archiveMetricDefinition',
+      id,
+      userId,
+    });
+  }
+
+  if (existing.archivedAt) {
     return {
-      ...existing,
-      archivedAt: new Date(),
-      updatedAt: new Date(),
+      id: existing.id,
+      userId: existing.userId,
+      metricType: existing.metricType,
+      displayName: existing.displayName,
+      valueType: existing.valueType as MetricValueType,
+      unit: existing.unit,
+      categoryValues: existing.categoryValues,
+      archivedAt: existing.archivedAt,
+      createdAt: existing.createdAt,
+      updatedAt: existing.updatedAt,
     };
   }
 
   try {
-    const [updated] = await db
+    const [archived] = await db
       .update(metricDefinitions)
       .set({
         archivedAt: new Date(),
@@ -523,72 +503,91 @@ export async function archiveMetricDefinition(id: string, userId: string): Promi
       .where(and(eq(metricDefinitions.id, id), eq(metricDefinitions.userId, userId)))
       .returning();
 
-    logger.info('Metric definition archived successfully', {
+    logger.info('Metric definition soft-archived successfully', {
       operation: 'archiveMetricDefinition',
       userId,
       id,
-      metricType: updated.metricType,
+      metricType: archived.metricType,
     });
 
     return {
-      id: updated.id,
-      userId: updated.userId,
-      metricType: updated.metricType,
-      displayName: updated.displayName,
-      valueType: updated.valueType as MetricValueType,
-      unit: updated.unit,
-      categoryValues: updated.categoryValues,
-      archivedAt: updated.archivedAt,
-      createdAt: updated.createdAt,
-      updatedAt: updated.updatedAt,
+      id: archived.id,
+      userId: archived.userId,
+      metricType: archived.metricType,
+      displayName: archived.displayName,
+      valueType: archived.valueType as MetricValueType,
+      unit: archived.unit,
+      categoryValues: archived.categoryValues,
+      archivedAt: archived.archivedAt,
+      createdAt: archived.createdAt,
+      updatedAt: archived.updatedAt,
     };
   } catch (err: unknown) {
-    throw new DatabaseError('Failed to archive metric definition', {
-      operation: 'archiveMetricDefinition',
-      id,
-      userId,
-      cause: err instanceof Error ? err.message : String(err),
-    }, err);
+    if (err instanceof NotFoundError) throw err;
+    throw new DatabaseError(
+      'Failed to archive metric definition',
+      {
+        operation: 'archiveMetricDefinition',
+        id,
+        userId,
+        cause: err instanceof Error ? err.message : String(err),
+      },
+      err
+    );
   }
 }
 
-export async function deleteMetricDefinition(id: string, userId: string): Promise<{ success: boolean; message: string }> {
-  const existing = await getMetricDefinition(id, userId);
+export async function deleteMetricDefinition(
+  id: string,
+  userId: string
+): Promise<{ success: boolean; message: string }> {
+  const [existing] = await db
+    .select()
+    .from(metricDefinitions)
+    .where(and(eq(metricDefinitions.id, id), eq(metricDefinitions.userId, userId)));
 
-  const isLiveDb = process.env.NODE_ENV !== 'test' || Boolean(process.env.DATABASE_URL?.includes('neon.tech'));
-
-  if (!isLiveDb) {
-    return { success: true, message: 'Metric definition deleted successfully' };
+  if (!existing) {
+    throw new NotFoundError('Metric definition not found or unauthorized', {
+      operation: 'deleteMetricDefinition',
+      id,
+      userId,
+    });
   }
 
-  try {
-    // Check if any entries exist for this metricType
-    const [entryCheck] = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(metricEntries)
-      .where(and(eq(metricEntries.userId, userId), eq(metricEntries.metricType, existing.metricType)));
+  const [entryCountRow] = await db
+    .select({ total: count() })
+    .from(metricEntries)
+    .where(
+      and(
+        eq(metricEntries.userId, userId),
+        eq(metricEntries.metricType, existing.metricType),
+        isNull(metricEntries.deletedAt)
+      )
+    );
 
-    const entryCount = entryCheck?.count || 0;
-    if (entryCount > 0) {
-      logger.warn('Delete rejected: metric definition has associated entries', {
+  const entryCount = entryCountRow?.total || 0;
+
+  if (entryCount > 0) {
+    logger.warn('Attempted to hard-delete metric definition with existing entries', {
+      operation: 'deleteMetricDefinition',
+      userId,
+      id,
+      metricType: existing.metricType,
+      entryCount,
+    });
+    throw new ValidationError(
+      `Cannot delete metric definition '${existing.metricType}' because ${entryCount} associated metric entries exist. Please archive it instead.`,
+      {
         operation: 'deleteMetricDefinition',
         userId,
         id,
         metricType: existing.metricType,
         entryCount,
-      });
-      throw new ValidationError(
-        'Cannot delete metric definition with existing entries. Archive it instead.',
-        {
-          operation: 'deleteMetricDefinition',
-          userId,
-          id,
-          metricType: existing.metricType,
-          entryCount,
-        }
-      );
-    }
+      }
+    );
+  }
 
+  try {
     await db
       .delete(metricDefinitions)
       .where(and(eq(metricDefinitions.id, id), eq(metricDefinitions.userId, userId)));
@@ -600,14 +599,80 @@ export async function deleteMetricDefinition(id: string, userId: string): Promis
       metricType: existing.metricType,
     });
 
-    return { success: true, message: 'Metric definition deleted successfully' };
+    return {
+      success: true,
+      message: `Metric definition '${existing.metricType}' successfully deleted`,
+    };
   } catch (err: unknown) {
     if (err instanceof ValidationError || err instanceof NotFoundError) throw err;
-    throw new DatabaseError('Failed to delete metric definition', {
-      operation: 'deleteMetricDefinition',
+    throw new DatabaseError(
+      'Failed to delete metric definition',
+      {
+        operation: 'deleteMetricDefinition',
+        id,
+        userId,
+        cause: err instanceof Error ? err.message : String(err),
+      },
+      err
+    );
+  }
+}
+
+export async function getMetricDefinition(
+  id: string,
+  userId: string
+): Promise<MetricDefinitionRecord> {
+  const [def] = await db
+    .select()
+    .from(metricDefinitions)
+    .where(and(eq(metricDefinitions.id, id), eq(metricDefinitions.userId, userId)));
+
+  if (!def) {
+    throw new NotFoundError('Metric definition not found or unauthorized', {
+      operation: 'getMetricDefinition',
       id,
       userId,
-      cause: err instanceof Error ? err.message : String(err),
-    }, err);
+    });
   }
+
+  return {
+    id: def.id,
+    userId: def.userId,
+    metricType: def.metricType,
+    displayName: def.displayName,
+    valueType: def.valueType as MetricValueType,
+    unit: def.unit,
+    categoryValues: def.categoryValues,
+    archivedAt: def.archivedAt,
+    createdAt: def.createdAt,
+    updatedAt: def.updatedAt,
+  };
+}
+
+export async function listMetricDefinitions(
+  userId: string,
+  includeArchived = false
+): Promise<MetricDefinitionRecord[]> {
+  const conditions = [eq(metricDefinitions.userId, userId)];
+  if (!includeArchived) {
+    conditions.push(isNull(metricDefinitions.archivedAt));
+  }
+
+  const rows = await db
+    .select()
+    .from(metricDefinitions)
+    .where(and(...conditions));
+
+  return rows.map((r) => ({
+    id: r.id,
+    userId: r.userId,
+    metricType: r.metricType,
+    displayName: r.displayName,
+    valueType: r.valueType as MetricValueType,
+    unit: r.unit,
+    categoryValues: r.categoryValues,
+    archivedAt: r.archivedAt,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+  }));
 }
