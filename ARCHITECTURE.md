@@ -52,7 +52,9 @@ exists in phase 1.
 |---|---|
 | user_id | FK to `users.id`, `ON DELETE CASCADE` |
 | provider | e.g. `google_health`, future: other integrations |
-| health_user_id | provider's own user identifier (e.g. the Google `sub` claim from the OAuth id_token) — required for exact-match webhook attribution; see "Webhook subscriber model" below |
+| health_user_id | provider's own user identifier (e.g. the Google
+  `sub` claim from the OAuth id_token) — required for exact-match
+  webhook attribution; see "Webhook subscriber model" below |
 | access_token / refresh_token | encrypted at rest |
 | scopes | |
 | status | active / disabled / needs_reauth |
@@ -69,23 +71,78 @@ manual, or from future integrations.
 | metric_type | normalized key, e.g. `heart_rate`, `steps`, `vo2_max_daily` |
 | external_id | provider's native point ID, when one exists (raw stream only — see uniqueness note below) |
 | start_time / end_time | always set; equal for point-in-time samples |
+| dimension | nullable text; sub-category axis for compound metrics
+  (e.g. heart rate zone name, sleep stage type) — see "Compound and
+  range metrics" below |
 | value_numeric | numeric, duration (seconds), or boolean (0/1) |
 | value_text | category label (for `metric_definitions.value_type = category`) |
+| value_min / value_max | nullable numeric; for range-based facts (e.g.
+  a heart rate zone's bpm boundaries) — see below |
 | unit | |
-| source_stream | `raw` \| `reconciled` (Google Health exposes both) |
+| source_stream | `raw` | `reconciled` (Google Health exposes both) |
 | raw_payload | jsonb, original provider response |
 | updated_at | |
 | deleted_at | nullable; soft delete, see below |
+
+**Compound and range metrics** — found when real synced data revealed
+that some provider payloads pack more into one data point than a single
+number or label can hold (e.g. `active-zone-minutes` includes a
+`heartRateZone` alongside its numeric value; the raw JSON for a sleep
+session contains 10+ individual stage transitions, not one summary
+number). `raw_payload` always preserves the full original response
+regardless, but the point of the columns above is to make this
+structure directly queryable without parsing JSON at read time:
+- `mapToNormalizedSchema` already returns an **array** by design (see
+  `baseAdapter.ts`) specifically so one raw API data point can expand
+  into multiple normalized rows — use this rather than collapsing
+  compound data into one row.
+- **Dimensioned values** (e.g. active zone minutes per heart-rate zone):
+  emit one row per dimension value —
+  `metric_type='active-zone-minutes', dimension='FAT_BURN', value_numeric=<n>`,
+  one row each for `CARDIO`/`PEAK`, etc.
+- **Sleep stages**: keep one summary row (`metric_type='sleep'`,
+  `value_numeric`=total minutes asleep, spanning the full session) *and*
+  emit one row per stage transition (`metric_type='sleep_stage'`,
+  `dimension`=stage type, `start_time`/`end_time`=that stage's actual
+  interval) — this is what makes "time in each sleep stage over time"
+  queryable at all; right now it's invisible inside `raw_payload`.
+- **Co-reported component values** (e.g. blood pressure's
+  systolic/diastolic): these are **not** a range — they're two
+  independently meaningful measurements reported together, not a single
+  quantity bounded between two numbers. Use `dimension`, the same as
+  heart-rate zones, not `value_min`/`value_max`:
+  `metric_type='blood-pressure', dimension='systolic', value_numeric=120`
+  and a second row with `dimension='diastolic'`. The distinction that
+  matters: `value_min`/`value_max` is for one quantity's boundary (a
+  zone's bpm threshold); `dimension` + `value_numeric` is for multiple
+  named components that each stand alone as their own time series.
+- **Ranges** (e.g. `daily-heart-rate-zones`, where each zone has bpm
+  boundaries that are recalculated over time as fitness changes): use
+  `value_min`/`value_max` for the boundary, combined with `dimension`
+  for which zone and `value_numeric` for an associated point value if
+  there is one (e.g. minutes spent in that zone that day) — one row per
+  zone per day captures the full fact and keeps zone-boundary drift
+  over time directly chartable, not just archaeology in `raw_payload`.
+- **Audit before assuming a type doesn't need this**: this pattern was
+  found by inspecting real synced payloads, not by reading docs — worth
+  auditing a few days of real data across metric types (anything with
+  an array, breakdown, or range inside its raw JSON is a candidate)
+  rather than assuming only the two examples above are affected.
 
 **Uniqueness / dedup**, enforced via upsert (`ON CONFLICT`), not
 insert-then-check. Raw and reconciled streams are keyed differently —
 they are not guaranteed to share a stable ID (the reconcile endpoint
 merges multiple sources and identifies points via `dataPointName`, not
-the raw `name`/point-ID field our `external_id` is based on):
+the raw `name`/point-ID field our `external_id` is based on). **Note:
+`dimension` must be included in both key variants below** — a single
+raw data point (one `external_id`) can now expand into multiple rows
+that share that same ID but differ by dimension (e.g. all sleep stages
+from one session share the session's `dataPointName`):
 - **Raw stream, with a native point ID**: unique on
-  `(user_id, provider, metric_type, external_id)`.
-- **Reconciled stream, or any interval/rollup type without a stable point ID** (e.g. steps): unique on
-  `(user_id, provider, metric_type, source_stream, start_time, end_time)`.
+  `(user_id, provider, metric_type, dimension, external_id)`.
+- **Reconciled stream, or any interval/rollup type without a stable
+  point ID** (e.g. steps): unique on
+  `(user_id, provider, metric_type, dimension, source_stream, start_time, end_time)`.
 - `reconciled` stream values take priority over `raw` stream values on
   conflict.
 
@@ -345,14 +402,15 @@ Matched against `connected_accounts.health_user_id` (populated via
    `INVALID_ARGUMENT` (no field-level detail), which is why several
    types were briefly and incorrectly believed unsupported during
    bisection before this was found.
+
    **Individually confirmed accepted by the live `subscribers.create`/
    `update` API, kebab-case, real 200 responses**: `steps`, `altitude`,
    `active-zone-minutes`, `activity-level`, `blood-glucose`, `body-fat`,
-   ``, `daily-heart-rate-variability`,
+   `calories-in-heart-rate-zone`, `daily-heart-rate-variability`,
    `daily-heart-rate-zones`, `daily-oxygen-saturation`,
    `daily-respiratory-rate`, `daily-resting-heart-rate`,
    `daily-sleep-temperature-derivations`, `distance`, `exercise`,
-   ``, `heart-rate`, `heart-rate-variability`, `height`,
+   `floors`, `heart-rate`, `heart-rate-variability`, `height`,
    `hydration-log`, `nutrition-log`, `respiratory-rate-sleep-summary`,
    `run-vo2-max`, `sedentary-period`, `sleep`,
    `time-in-heart-rate-zone`, `weight`. 26 of 27 documented types
@@ -361,18 +419,19 @@ Matched against `connected_accounts.health_user_id` (populated via
    `METRICS_14_DAY`), and confirm whether the per-user data-point query
    endpoints (`/dataTypes/{type}/...`) also expect kebab-case rather
    than assuming they match the subscriber endpoint's convention.
+
    **Genuinely rejected, confirmed individually across multiple spelling
    variants (kebab-case, snake_case) — not a casing artifact**:
    `total-calories` / `total_calories`. Move to `POLLING_ONLY_METRICS`.
+
    For webhook-supported types, webhooks trigger immediate syncs, with
    a scheduled reconciliation job as backup for missed/delayed
    deliveries and disabled subscriptions.
    **Confirmed still polling-only** (no webhook support found in docs):
    generic `vo2Max`/`dailyVo2Max` (note: `runVo2Max`/`run-vo2-max`
-   specifically is webhook-supported — these are different types),
+   specifically *is* webhook-supported — these are different types),
    `electrocardiogram`, `irregularRhythmNotification`,
-   `coreBodyTemperature`, `bloodPressure`, and `total-calories`/
-   `total_calories` (confirmed genuinely unsupported, all spellings).
+   `coreBodyTemperature`, `bloodPressure`, and `total-calories`/`total_calories` (confirmed genuinely unsupported, all spellings).
    This list has already changed materially once mid-project — re-verify
    against the live docs (with direct quotes, not summary) before trusting
    it again; this exact API surface has produced multiple incorrect
@@ -422,7 +481,7 @@ separate task from ongoing sync, not a variant of it:
     for why, and note this list has already grown twice unexpectedly;
     don't assume it's final)
 - Most data types support ~90 days per query; heart rate, active minutes,
-  total calories, and are capped at 14 days per
+  total calories, and calories-in-heart-rate-zone are capped at 14 days per
   request — batch requests accordingly.
 - Failed webhook deliveries retry for up to 7 days before being dropped;
   the reconciliation job is the safety net beyond that window (see
@@ -487,7 +546,7 @@ forward).
   Render deployment meant for real use at the same connection string
   simultaneously used for destructive testing (cascade-delete/rollback
   tests specifically).
-- **Go-live plan (decided)**: fresh start, not a data migration — test
+  **Go-live plan (decided)**: fresh start, not a data migration — test
   branch data is not copied to production. Sequence: (1) confirm data
   quality against test branch, (2) test full backfill against test
   branch, (3) live-verify two-account webhook attribution against test
@@ -557,3 +616,4 @@ the phase it affects:
 - Whether phase 4's adapter interface should be generalized now or
   hardcoded for 1–2 known integrations first — Phase 4.
 - Frontend choice: web page vs. native app — Phase 5.
+
