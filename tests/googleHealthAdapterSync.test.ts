@@ -97,6 +97,9 @@ describe('GoogleHealthAdapter Sync & Range Splitting', () => {
     );
 
     // Instantaneous / sample-time metric
+    expect(buildAip160Filter('blood-pressure', start, end)).toBe(
+      'blood_pressure.sample_time.physical_time >= "2026-08-16T00:00:00.000Z" AND blood_pressure.sample_time.physical_time < "2026-08-17T00:00:00.000Z"'
+    );
     expect(buildAip160Filter('blood-glucose', start, end)).toBe(
       'blood_glucose.sample_time.physical_time >= "2026-08-16T00:00:00.000Z" AND blood_glucose.sample_time.physical_time < "2026-08-17T00:00:00.000Z"'
     );
@@ -182,6 +185,36 @@ describe('GoogleHealthAdapter Sync & Range Splitting', () => {
     expect(mappedDaily[0].valueNumeric).toBe(59);
     expect(mappedDaily[0].unit).toBe('bpm');
     expect(mappedDaily[0].startTime).toEqual(new Date('2026-08-16T00:00:00.000Z'));
+    // 5. Blood pressure with systolic and diastolic
+    const bpPoint = {
+      name: 'users/me/dataTypes/blood-pressure/dataPoints/bp_sample_01',
+      userId: 'user_1',
+      metricType: 'blood-pressure',
+      sampleTime: {
+        physicalTime: '2026-08-17T14:30:00Z',
+      },
+      bloodPressure: {
+        systolicMillimetersOfMercury: 120,
+        diastolicMillimetersOfMercury: 80,
+      },
+    };
+    const mappedBp = adapter.mapToNormalizedSchema(bpPoint);
+    expect(mappedBp).toHaveLength(2);
+
+    const systolicEntry = mappedBp.find((e) => e.dimension === 'systolic');
+    const diastolicEntry = mappedBp.find((e) => e.dimension === 'diastolic');
+
+    expect(systolicEntry).toBeDefined();
+    expect(systolicEntry?.valueNumeric).toBe(120);
+    expect(systolicEntry?.unit).toBe('mmHg');
+    expect(systolicEntry?.metricType).toBe('blood-pressure');
+    expect(systolicEntry?.externalId).toBe('users/me/dataTypes/blood-pressure/dataPoints/bp_sample_01_systolic');
+
+    expect(diastolicEntry).toBeDefined();
+    expect(diastolicEntry?.valueNumeric).toBe(80);
+    expect(diastolicEntry?.unit).toBe('mmHg');
+    expect(diastolicEntry?.metricType).toBe('blood-pressure');
+    expect(diastolicEntry?.externalId).toBe('users/me/dataTypes/blood-pressure/dataPoints/bp_sample_01_diastolic');
   });
 
   test('sync method skips metrics with 403 MISSING_OAUTH_SCOPE gracefully without failing entire batch', async () => {

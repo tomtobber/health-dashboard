@@ -105,6 +105,7 @@ export function buildAip160Filter(kebabMetric: string, startDate: Date, endDate:
   // 2. Instantaneous / sample-based metrics
   const sampleTimeMetrics = new Set([
     'blood-glucose',
+    'blood-pressure',
     'body-fat',
     'heart-rate',
     'heart-rate-variability',
@@ -564,26 +565,61 @@ export class GoogleHealthAdapter implements ProviderAdapter {
       for (const range of ranges) {
         pagesFetched += 1;
         if (env.NODE_ENV === 'test' || params.accessToken?.startsWith('mock_')) {
-          const sampleCount = (metricType.includes('heart') || metricType.includes('rate')) ? 5 : 2;
-          pointsFetched += sampleCount;
-          for (let i = 0; i < sampleCount; i++) {
-            const timeOffset = i * (sampleCount === 5 ? 5000 : 3600000);
-            const startTime = new Date(range.start.getTime() + timeOffset);
-            const endTime = new Date(startTime.getTime() + (sampleCount === 5 ? 5000 : 3600000));
-            const sourceStream = params.sourceStream || (i % 2 === 0 ? 'raw' : 'reconciled');
+          if (kebabMetric === 'blood-pressure' || kebabMetric === 'blood_pressure') {
+            pointsFetched += 1;
+            const startTime = new Date(range.start.getTime());
+            const endTime = new Date(range.start.getTime());
+            const sourceStream = params.sourceStream || 'raw';
             allEntries.push({
               userId: params.userId,
               provider: this.providerName,
-              metricType: kebabMetric,
-              externalId: sourceStream === 'raw' ? 'mock_ext_' + kebabMetric + '_' + startTime.getTime() : undefined,
+              metricType: 'blood-pressure',
+              externalId: sourceStream === 'raw' ? `mock_ext_bp_systolic_${startTime.getTime()}` : undefined,
               startTime,
               endTime,
-              valueNumeric: sampleCount === 5 ? 72 + i : 1000 + (i * 500),
-              unit: sampleCount === 5 ? 'bpm' : 'count',
+              valueNumeric: 120,
+              unit: 'mmHg',
+              dimension: 'systolic',
               sourceStream,
               aggregation: 'raw',
-              rawPayload: { metricType: kebabMetric, sampleIndex: i, time: startTime.toISOString() },
+              rawPayload: { metricType: 'blood-pressure', systolic: 120, diastolic: 80 },
             });
+            allEntries.push({
+              userId: params.userId,
+              provider: this.providerName,
+              metricType: 'blood-pressure',
+              externalId: sourceStream === 'raw' ? `mock_ext_bp_diastolic_${startTime.getTime()}` : undefined,
+              startTime,
+              endTime,
+              valueNumeric: 80,
+              unit: 'mmHg',
+              dimension: 'diastolic',
+              sourceStream,
+              aggregation: 'raw',
+              rawPayload: { metricType: 'blood-pressure', systolic: 120, diastolic: 80 },
+            });
+          } else {
+            const sampleCount = (metricType.includes('heart') || metricType.includes('rate')) ? 5 : 2;
+            pointsFetched += sampleCount;
+            for (let i = 0; i < sampleCount; i++) {
+              const timeOffset = i * (sampleCount === 5 ? 5000 : 3600000);
+              const startTime = new Date(range.start.getTime() + timeOffset);
+              const endTime = new Date(startTime.getTime() + (sampleCount === 5 ? 5000 : 3600000));
+              const sourceStream = params.sourceStream || (i % 2 === 0 ? 'raw' : 'reconciled');
+              allEntries.push({
+                userId: params.userId,
+                provider: this.providerName,
+                metricType: kebabMetric,
+                externalId: sourceStream === 'raw' ? 'mock_ext_' + kebabMetric + '_' + startTime.getTime() : undefined,
+                startTime,
+                endTime,
+                valueNumeric: sampleCount === 5 ? 72 + i : 1000 + (i * 500),
+                unit: sampleCount === 5 ? 'bpm' : 'count',
+                sourceStream,
+                aggregation: 'raw',
+                rawPayload: { metricType: kebabMetric, sampleIndex: i, time: startTime.toISOString() },
+              });
+            }
           }
         } else {
           // Official Google Health REST v4 endpoint with pagination support
@@ -896,13 +932,34 @@ export class GoogleHealthAdapter implements ProviderAdapter {
       return [createEntry(src, val, 'mg/dL')];
     }
 
-    // 12. BLOOD PRESSURE
-    if (metricType === 'blood-pressure' && nested) {
-      const systolic = nested.systolic ?? nested.systolicMillimetersOfMercury;
-      const diastolic = nested.diastolic ?? nested.diastolicMillimetersOfMercury;
-      if (systolic !== undefined) entries.push(createEntry('systolic', Number(systolic), 'mmHg'));
-      if (diastolic !== undefined) entries.push(createEntry('diastolic', Number(diastolic), 'mmHg'));
-      if (entries.length > 0) return entries;
+    // 12. BLOOD PRESSURE (Split into separate Systolic and Diastolic dimension entries)
+    if (metricType === 'blood-pressure' || metricType === 'blood_pressure') {
+      const bpObj = (nested || rawPoint.bloodPressure || rawPoint['blood-pressure'] || rawPoint) as Record<string, unknown>;
+
+      const extractVal = (val: unknown): number | undefined => {
+        if (typeof val === 'number' && !isNaN(val)) return val;
+        if (typeof val === 'string' && val.trim() !== '' && !isNaN(Number(val))) return Number(val);
+        if (typeof val === 'object' && val !== null) {
+          const vObj = val as Record<string, unknown>;
+          if (typeof vObj.millimetersOfMercury === 'number') return vObj.millimetersOfMercury;
+          if (typeof vObj.millimetersOfMercury === 'string') return Number(vObj.millimetersOfMercury);
+          if (typeof vObj.value === 'number') return vObj.value;
+          if (typeof vObj.value === 'string') return Number(vObj.value);
+        }
+        return undefined;
+      };
+
+      const systolic = extractVal(bpObj.systolic ?? bpObj.systolicMillimetersOfMercury ?? rawPoint.systolic ?? rawPoint.systolicMillimetersOfMercury);
+      const diastolic = extractVal(bpObj.diastolic ?? bpObj.diastolicMillimetersOfMercury ?? rawPoint.diastolic ?? rawPoint.diastolicMillimetersOfMercury);
+
+      const bpEntries: NormalizedMetricEntry[] = [];
+      if (systolic !== undefined) {
+        bpEntries.push(createEntry('systolic', systolic, 'mmHg', undefined, 'systolic'));
+      }
+      if (diastolic !== undefined) {
+        bpEntries.push(createEntry('diastolic', diastolic, 'mmHg', undefined, 'diastolic'));
+      }
+      return bpEntries;
     }
 
     // -------------------------------------------------------------
