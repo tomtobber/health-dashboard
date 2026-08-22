@@ -17,7 +17,9 @@
     "db:migrate:phase3": "tsx src/scripts/migratePhase3.ts",
     "build:backend": "tsc",
     "build:client": "npm --prefix client run build",
-    "db:migrate:phase5": "tsx src/scripts/migratePhase5.ts"
+    "db:migrate:phase5": "tsx src/scripts/migratePhase5.ts",
+    "typecheck:client": "npm --prefix client run typecheck",
+    "typecheck:all": "npm run typecheck && npm run typecheck:client"
   },
   "keywords": [],
   "author": "",
@@ -55,5 +57,8 @@
     "ts-jest": "^29.1.5",
     "tsx": "^4.16.2",
     "typescript": "^5.5.2"
-  }
+  },
+  "workspaces": [
+    "client"
+  ]
 }
