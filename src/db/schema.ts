@@ -22,6 +22,21 @@ export const connectedAccounts = pgTable('connected_accounts', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+export const metricDefinitions = pgTable('metric_definitions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  metricType: text('metric_type').notNull(),
+  displayName: text('display_name').notNull(),
+  valueType: text('value_type').notNull(), // 'numeric' | 'duration' | 'boolean' | 'category'
+  unit: text('unit'),
+  categoryValues: jsonb('category_values').$type<string[]>(),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  userMetricIdx: uniqueIndex('metric_definitions_user_metric_idx').on(table.userId, table.metricType),
+}));
+
 export const metricEntries = pgTable('metric_entries', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
@@ -34,9 +49,9 @@ export const metricEntries = pgTable('metric_entries', {
   valueText: text('value_text'),
   valueMin: doublePrecision('value_min'),
   valueMax: doublePrecision('value_max'),
-  unit: text('unit').notNull(),
+  unit: text('unit'),
   dimension: text('dimension').default('default').notNull(),
-  sourceStream: text('source_stream').notNull(), // 'raw' | 'reconciled'
+  sourceStream: text('source_stream'), // 'raw' | 'reconciled' | null for manual
   aggregation: text('aggregation').default('raw').notNull(),
   rawPayload: jsonb('raw_payload'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),

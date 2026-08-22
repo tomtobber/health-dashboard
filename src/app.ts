@@ -5,6 +5,8 @@ import { authRouter } from './routes/authRoutes';
 import { connectRouter } from './routes/connectRoutes';
 import { webhookRouter } from './routes/webhookRoutes';
 import { syncRouter } from './routes/syncRoutes';
+import { metricDefinitionRouter } from './routes/metricDefinitionRoutes';
+import { manualEntryRouter } from './routes/manualEntryRoutes';
 import { AppError } from './errors/AppError';
 import { logger } from './utils/logger';
 
@@ -17,6 +19,8 @@ app.use('/api/auth', authRouter);
 app.use('/api/connect', connectRouter);
 app.use('/api/webhooks', webhookRouter);
 app.use('/api/sync', syncRouter);
+app.use('/api/metric-definitions', metricDefinitionRouter);
+app.use('/api/metric-entries', manualEntryRouter);
 
 app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

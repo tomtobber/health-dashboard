@@ -26,9 +26,11 @@ invariants that enforce this.
    Google supports it, polling elsewhere — see Architecture Principle 3
    for the current, verified split) and store it in a normalized,
    provider-agnostic data model.
-3. **Custom metrics** — Let the user define and log their own metric types
-   directly in the app (e.g. calories, alcohol units), stored in the same
-   normalized model as synced data.
+3. **Custom metrics** *(complete)* — Let the user define and log their
+   own metric types directly in the app (e.g. calories, alcohol units),
+   stored in the same normalized model as synced data. See
+   `metric_definitions`, "Phase 3 API Surface," and "Enriched Metric Read
+   Layer" below for the implemented design.
 4. **Other integrations** — Support additional third-party data sources
    beyond Google Health (e.g. a calorie-tracking app), each plugging into
    the same sync + storage model via a common adapter interface.
@@ -163,10 +165,16 @@ UX is ever wanted, that's an application-layer flag
 (`users.scheduled_deletion_at` + a background job) acted on later — not
 a reason to avoid CASCADE at the database level.
 
-### `metric_definitions` (phase 3 — resolved)
+### `metric_definitions` (phase 3 — implemented)
 User-defined custom metric types, referenced by `metric_entries.metric_type`
 for that user. `value_type` determines whether a given entry's data lives
 in `metric_entries.value_numeric` or `.value_text` (see above).
+
+**`metric_entries` columns relaxed for this table to exist**: `unit` and
+`source_stream` are nullable on `metric_entries` (both are meaningless for
+`boolean`/`category` value types and for `provider = 'manual'` rows
+respectively) — this was the one schema change phase 3 made to the
+existing table, everything else is additive.
 
 | column | notes |
 |---|---|
@@ -174,13 +182,40 @@ in `metric_entries.value_numeric` or `.value_text` (see above).
 | user_id | FK to `users.id`, `ON DELETE CASCADE` |
 | metric_type | user-chosen key, unique per `(user_id, metric_type)`; must not collide with reserved provider metric-type strings |
 | display_name | human-readable label shown in UI; the only field editable after entries exist (see below) |
-| value_type | enum: `numeric` | `duration` | `boolean` | `category` |
+| value_type | enum: `numeric` \| `duration` \| `boolean` \| `category` |
 | unit | required for `numeric`/`duration`; null for `boolean`/`category` |
 | category_values | jsonb array of allowed labels; only used when `value_type = 'category'` |
 | archived_at | nullable; soft "retire," see below |
 | created_at / updated_at | |
 
-**Immutability once entries exist**: `value_type` and `unit` are locked as
+**`metric_type` format**: strictly enforced kebab-case
+(`/^[a-z0-9]+(?:-[a-z0-9]+)*$/`, 2–50 chars), validated with a Zod regex
+and a descriptive `ValidationError` on mismatch — typed directly by the
+user, not derived/slugified from `display_name`. This was a deliberate
+choice (explicit control over the stored key vs. friendlier UX) rather
+than an oversight.
+
+**Reserved metric-type collisions**: checked against a set derived at
+import time directly from the adapters' own metric constants
+(`WEBHOOK_SUPPORTED_METRICS`, `POLLING_ONLY_METRICS`, `METRICS_14_DAY`)
+plus known provider identifiers — not a separately hand-maintained list
+that could drift out of sync with the adapters.
+
+**Category values**: must be a non-empty array of deduplicated,
+non-empty trimmed strings — validated at creation and at update — in
+addition to the fixed-list rule above.
+
+**Ownership scoping**: every definition lookup used for writes (logging,
+updating, deleting an entry) is scoped by `user_id`, not just by `id` —
+looking up someone else's definition/entry by ID returns `NotFoundError`
+(404) rather than leaking existence or allowing cross-user writes.
+
+**Unique-constraint handling**: the creation path narrows on the actual
+Postgres error code (`23505`) before mapping to `ValidationError`
+("metric type already exists for this user") — any other DB error is
+logged and rethrown as a `DatabaseError`, not silently reattributed.
+
+`value_type` and `unit` are locked as
 soon as any `metric_entries` row references this definition — checked at
 the service layer (`EXISTS` query) before applying an update, not left to
 convention. Attempting to change either after that point is rejected as a
@@ -224,22 +259,70 @@ is a two-step DB mutation and must be wrapped in a transaction — a failure
 between the two steps must not leave a definition with no record of
 whether the first entry landed.
 
-## Phase 3 API Surface (custom metrics)
+## Phase 3 API Surface (custom metrics — implemented)
 
 - `POST /api/metric-definitions` — create; Zod-validated body
   (`metric_type`, `display_name`, `value_type`, `unit?`, `category_values?`).
+- `GET /api/metric-definitions` — list user's definitions
+  (`?includeArchived=true` to include retired ones).
+- `GET /api/metric-definitions/:id` — get a single definition.
 - `PATCH /api/metric-definitions/:id` — update; server enforces the
   value_type/unit lock above regardless of what the client sends.
-- `POST /api/metric-definitions/:id/archive` — soft-retire.
+- `POST /api/metric-definitions/:id/archive` — soft-retire. **No
+  unarchive route exists** — deliberate; create a new definition instead
+  of reviving an archived one.
 - `DELETE /api/metric-definitions/:id` — permitted only if zero associated
   entries exist; otherwise returns a typed error directing the client to
   archive instead.
 - `POST /api/metric-entries/manual` — log an entry against a definition;
   validates the value against the definition's `value_type`/`unit`/
   `category_values` before writing through the shared normalized-row path.
+- `POST /api/metric-entries/manual/combined` — create a definition and
+  log its first entry in one transactional call (the "define a metric and
+  log today's value in one form" flow) — the new definition's `id` is
+  passed directly into the entry-logging step rather than re-fetched by
+  `metric_type`, avoiding a redundant lookup inside the transaction.
 - `PATCH` / `DELETE /api/metric-entries/manual/:id` — correct or remove an
   individual manual entry (expected, since these are user-authored, unlike
-  synced provider data).
+  synced provider data). Editing is allowed even if the entry's definition
+  is archived (correcting history should still work); logging a *new*
+  entry against an archived definition is blocked.
+- `GET /api/metric-entries?metric_type=...&start_time=...&end_time=...` —
+  enriched read endpoint (see below); also accepts
+  `metric_types=a,b,c` for a batched multi-metric fetch. Despite the
+  route living in `manualEntryRoutes.ts` for now, it serves both synced
+  and custom metrics — a naming/location cleanup worth doing next time
+  that file is touched, not urgent.
+
+## Enriched Metric Read Layer (phase 3 — implemented)
+
+Closes the read-side half of Architecture Principle 5: `metric_entries`
+already returns manual rows alongside synced ones with no special-casing
+(`filterReconciledOverRaw` treats `source_stream = null` manual rows as
+valid raw entries), but charting/UI needs metadata — `display_name`,
+`value_type`, `unit`, `category_values` — that lives on
+`metric_definitions` for custom metrics and nowhere explicit for provider
+metrics.
+
+- **`queryEnrichedMetricEntries(filter)`** (`metricsQueryService.ts`) —
+  resolves this metadata alongside the normalized entries for one metric:
+  `{ metricType, displayName, valueType, unit, categoryValues, entries }`.
+  - For a custom metric: reads `metric_definitions`.
+  - For a provider metric: reads `CANONICAL_PROVIDER_METRICS`
+    (`baseAdapter.ts`) — a single canonical dictionary of `displayName` /
+    `valueType` / `unit` / `categoryValues` per known provider metric key,
+    with a title-case fallback for any unlisted key so an unrecognized
+    provider metric never fails outright, just renders less prettily.
+  - **Deliberately does not filter on `archived_at IS NULL`** — an
+    archived definition's historical entries must remain 100% chartable
+    with full metadata; `archived_at` only controls whether a metric
+    appears in "log a new entry" pickers, never whether it's queryable.
+- **`queryBatchEnrichedMetrics(filters[])`** — the same resolution for
+  multiple metrics at once via two `IN (...)` queries (one for
+  definitions, one for entries) instead of N+1 per-metric round trips;
+  what the dashboard's multi-metric view actually calls.
+- Exposed over HTTP via `GET /api/metric-entries` (single or
+  `metric_types=` batched) above.
 
 ## Data Volume & Resolution Strategy
 
@@ -685,10 +768,11 @@ the phase it affects:
   count), with the raw response preserved in `raw_payload`.
 - **Still open**: how long full-resolution `raw_payload` data is
   retained before pruning — not yet decided — Phase 2.
-- **Resolved**: Phase 3 schema, immutability/retirement rules, category
-  value handling, manual-entry adapter treatment, and API surface — see
-  `metric_definitions` and "Phase 3 API Surface" above.
+- **Resolved & implemented**: Phase 3 in full — schema,
+  immutability/retirement rules, category value handling, manual-entry
+  adapter treatment, API surface, and the enriched read layer closing out
+  Architecture Principle 5 for custom metrics — see `metric_definitions`,
+  "Phase 3 API Surface," and "Enriched Metric Read Layer" above.
 - Whether phase 4's adapter interface should be generalized now or
   hardcoded for 1–2 known integrations first — Phase 4.
 - Frontend choice: web page vs. native app — Phase 5.
-

@@ -1,4 +1,4 @@
-import { metricEntries, connectedAccounts } from '../src/db/schema';
+import { metricEntries, connectedAccounts, metricDefinitions } from '../src/db/schema';
 import { getTableColumns } from 'drizzle-orm';
 
 describe('dbSchema verification', () => {
@@ -22,6 +22,21 @@ describe('dbSchema verification', () => {
     expect(columns).toHaveProperty('aggregation');
     expect(columns).toHaveProperty('rawPayload');
     expect(columns).toHaveProperty('deletedAt');
+  });
+
+  test('metricDefinitions contains required schema columns', () => {
+    const columns = getTableColumns(metricDefinitions);
+
+    expect(columns).toHaveProperty('id');
+    expect(columns).toHaveProperty('userId');
+    expect(columns).toHaveProperty('metricType');
+    expect(columns).toHaveProperty('displayName');
+    expect(columns).toHaveProperty('valueType');
+    expect(columns).toHaveProperty('unit');
+    expect(columns).toHaveProperty('categoryValues');
+    expect(columns).toHaveProperty('archivedAt');
+    expect(columns).toHaveProperty('createdAt');
+    expect(columns).toHaveProperty('updatedAt');
   });
 
   test('connectedAccounts contains encrypted token columns and scopes', () => {
