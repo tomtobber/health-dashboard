@@ -22,6 +22,17 @@ describe('Phase 3 - Manual Metric Entries', () => {
 
   beforeAll(async () => {
     await pool.query(`
+      ALTER TABLE metric_entries ADD COLUMN IF NOT EXISTS value_numeric DOUBLE PRECISION;
+      ALTER TABLE metric_entries ADD COLUMN IF NOT EXISTS value_text TEXT;
+      ALTER TABLE metric_entries ADD COLUMN IF NOT EXISTS value_min DOUBLE PRECISION;
+      ALTER TABLE metric_entries ADD COLUMN IF NOT EXISTS value_max DOUBLE PRECISION;
+      ALTER TABLE metric_entries ADD COLUMN IF NOT EXISTS dimension TEXT NOT NULL DEFAULT 'default';
+      ALTER TABLE metric_entries ADD COLUMN IF NOT EXISTS aggregation TEXT NOT NULL DEFAULT 'raw';
+      ALTER TABLE metric_entries ADD COLUMN IF NOT EXISTS raw_payload JSONB;
+      ALTER TABLE metric_entries ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+      ALTER TABLE metric_entries ALTER COLUMN unit DROP NOT NULL;
+      ALTER TABLE metric_entries ALTER COLUMN source_stream DROP NOT NULL;
+
       CREATE TABLE IF NOT EXISTS metric_definitions (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -36,8 +47,6 @@ describe('Phase 3 - Manual Metric Entries', () => {
       );
       CREATE UNIQUE INDEX IF NOT EXISTS metric_definitions_user_metric_idx 
         ON metric_definitions (user_id, metric_type);
-      ALTER TABLE metric_entries ALTER COLUMN unit DROP NOT NULL;
-      ALTER TABLE metric_entries ALTER COLUMN source_stream DROP NOT NULL;
     `).catch(() => {});
 
     await pool.query('DELETE FROM users WHERE email IN ($1, $2)', [
