@@ -163,11 +163,83 @@ UX is ever wanted, that's an application-layer flag
 (`users.scheduled_deletion_at` + a background job) acted on later — not
 a reason to avoid CASCADE at the database level.
 
-### `metric_definitions` (phase 3+)
-User-defined custom metric types (name, unit, value type: numeric /
-duration / boolean / category), referenced by `metric_entries.metric_type`
+### `metric_definitions` (phase 3 — resolved)
+User-defined custom metric types, referenced by `metric_entries.metric_type`
 for that user. `value_type` determines whether a given entry's data lives
 in `metric_entries.value_numeric` or `.value_text` (see above).
+
+| column | notes |
+|---|---|
+| id | surrogate PK (uuid) |
+| user_id | FK to `users.id`, `ON DELETE CASCADE` |
+| metric_type | user-chosen key, unique per `(user_id, metric_type)`; must not collide with reserved provider metric-type strings |
+| display_name | human-readable label shown in UI; the only field editable after entries exist (see below) |
+| value_type | enum: `numeric` | `duration` | `boolean` | `category` |
+| unit | required for `numeric`/`duration`; null for `boolean`/`category` |
+| category_values | jsonb array of allowed labels; only used when `value_type = 'category'` |
+| archived_at | nullable; soft "retire," see below |
+| created_at / updated_at | |
+
+**Immutability once entries exist**: `value_type` and `unit` are locked as
+soon as any `metric_entries` row references this definition — checked at
+the service layer (`EXISTS` query) before applying an update, not left to
+convention. Attempting to change either after that point is rejected as a
+`ValidationError`, not silently ignored. `display_name` has no bearing on
+how existing data is interpreted, so it remains editable at any time.
+
+**Category values are a fixed list**, edited only through an explicit
+"manage categories" action — not grown implicitly by typing a new value
+while logging an entry. Logging validates the submitted value against the
+current `category_values` list (Zod `z.enum` built dynamically from it);
+an unrecognized value is rejected, not coerced. Removing a category value
+that existing entries already use should be blocked, for the same reason
+`value_type`/`unit` are locked — don't silently orphan existing data's
+meaning.
+
+**Retiring vs. deleting**: a definition with zero associated entries can be
+hard-deleted (nothing references it yet). Once entries exist, deletion is
+soft (`archived_at`), mirroring the `deleted_at` pattern already used on
+`metric_entries` — archived definitions drop out of "log a new entry"
+pickers but stay fully intact for historical charts/exports, per
+Architecture Principle 5.
+
+**Manual entry as an adapter**: manual/custom-metric entry doesn't map
+cleanly onto the full `authenticate` / `sync` / `mapToNormalizedSchema`
+adapter interface (Principle 2) — there's no external system to
+authenticate against or poll. Treated as a degenerate adapter instead:
+`authenticate()` is a no-op (the app's own logged-in user), and
+`mapToNormalizedSchema()` is invoked directly from the API route handler
+on submission rather than from a `sync()` pull loop. This keeps the single
+normalized write path (Principle 1) intact without inventing a fake sync
+cycle where none exists. Resulting rows use `provider = 'manual'`,
+`external_id = null` (nothing to dedupe against upstream — each submission
+is its own row, not an upsert target), and `source_stream = null` (the
+raw/reconciled distinction doesn't apply to manual data). Unlike synced
+provider data, manual entries support direct user-initiated edit/delete on
+individual rows, since the user authored them.
+
+**Combined create-definition-and-log-first-entry flow**: since this is a
+likely UX pattern (create a metric and log today's value in one form), it
+is a two-step DB mutation and must be wrapped in a transaction — a failure
+between the two steps must not leave a definition with no record of
+whether the first entry landed.
+
+## Phase 3 API Surface (custom metrics)
+
+- `POST /api/metric-definitions` — create; Zod-validated body
+  (`metric_type`, `display_name`, `value_type`, `unit?`, `category_values?`).
+- `PATCH /api/metric-definitions/:id` — update; server enforces the
+  value_type/unit lock above regardless of what the client sends.
+- `POST /api/metric-definitions/:id/archive` — soft-retire.
+- `DELETE /api/metric-definitions/:id` — permitted only if zero associated
+  entries exist; otherwise returns a typed error directing the client to
+  archive instead.
+- `POST /api/metric-entries/manual` — log an entry against a definition;
+  validates the value against the definition's `value_type`/`unit`/
+  `category_values` before writing through the shared normalized-row path.
+- `PATCH` / `DELETE /api/metric-entries/manual/:id` — correct or remove an
+  individual manual entry (expected, since these are user-authored, unlike
+  synced provider data).
 
 ## Data Volume & Resolution Strategy
 
@@ -613,6 +685,9 @@ the phase it affects:
   count), with the raw response preserved in `raw_payload`.
 - **Still open**: how long full-resolution `raw_payload` data is
   retained before pruning — not yet decided — Phase 2.
+- **Resolved**: Phase 3 schema, immutability/retirement rules, category
+  value handling, manual-entry adapter treatment, and API surface — see
+  `metric_definitions` and "Phase 3 API Surface" above.
 - Whether phase 4's adapter interface should be generalized now or
   hardcoded for 1–2 known integrations first — Phase 4.
 - Frontend choice: web page vs. native app — Phase 5.
