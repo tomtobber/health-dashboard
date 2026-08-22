@@ -32,6 +32,8 @@ export const metricEntries = pgTable('metric_entries', {
   endTime: timestamp('end_time', { withTimezone: true }).notNull(),
   valueNumeric: doublePrecision('value_numeric'),
   valueText: text('value_text'),
+  valueMin: doublePrecision('value_min'),
+  valueMax: doublePrecision('value_max'),
   unit: text('unit').notNull(),
   dimension: text('dimension').default('default').notNull(),
   sourceStream: text('source_stream').notNull(), // 'raw' | 'reconciled'

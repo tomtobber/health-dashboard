@@ -186,6 +186,8 @@ export async function executeSync(options: ExecuteSyncOptions): Promise<SyncExec
           endTime: entry.endTime,
           valueNumeric: entry.valueNumeric,
           valueText: entry.valueText ?? null,
+          valueMin: entry.valueMin ?? null,
+          valueMax: entry.valueMax ?? null,
           unit: entry.unit,
           dimension,
           sourceStream: entry.sourceStream,
@@ -204,6 +206,8 @@ export async function executeSync(options: ExecuteSyncOptions): Promise<SyncExec
           set: {
             valueNumeric: sql`EXCLUDED.value_numeric`,
             valueText: sql`EXCLUDED.value_text`,
+            valueMin: sql`EXCLUDED.value_min`,
+            valueMax: sql`EXCLUDED.value_max`,
             unit: sql`EXCLUDED.unit`,
             startTime: sql`EXCLUDED.start_time`,
             endTime: sql`EXCLUDED.end_time`,

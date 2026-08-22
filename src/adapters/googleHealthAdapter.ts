@@ -800,7 +800,15 @@ export class GoogleHealthAdapter implements ProviderAdapter {
 
     const isHighFreq = metricType === 'heart-rate' || metricType === 'activity-level' || metricType === 'steps';
 
-    const createEntry = (dimension: string, valueNumeric: number, unit: string, valueText?: string, extIdSuffix?: string): NormalizedMetricEntry => ({
+    const createEntry = (
+      dimension: string,
+      valueNumeric: number,
+      unit: string,
+      valueText?: string,
+      extIdSuffix?: string,
+      valueMin?: number,
+      valueMax?: number
+    ): NormalizedMetricEntry => ({
       userId,
       provider: 'google_health',
       metricType,
@@ -809,6 +817,8 @@ export class GoogleHealthAdapter implements ProviderAdapter {
       endTime,
       valueNumeric: !isNaN(valueNumeric) ? valueNumeric : 0,
       valueText,
+      valueMin: valueMin !== undefined && !isNaN(valueMin) ? valueMin : undefined,
+      valueMax: valueMax !== undefined && !isNaN(valueMax) ? valueMax : undefined,
       unit,
       dimension,
       sourceStream,
@@ -887,13 +897,15 @@ export class GoogleHealthAdapter implements ProviderAdapter {
       if (entries.length > 0) return entries;
     }
 
-    // 6. DAILY HEART RATE ZONES
+    // 6. DAILY HEART RATE ZONES (Records zone min and max range bounds in valueMin and valueMax)
     if (metricType === 'daily-heart-rate-zones' && nested && Array.isArray(nested.heartRateZones)) {
       for (const zone of nested.heartRateZones as Record<string, unknown>[]) {
         if (zone.heartRateZoneType) {
           const zoneName = String(zone.heartRateZoneType).toLowerCase();
-          const minBpm = Number(zone.minBeatsPerMinute || 0);
-          entries.push(createEntry(zoneName, minBpm, 'bpm'));
+          const minBpm = zone.minBeatsPerMinute !== undefined ? Number(zone.minBeatsPerMinute) : undefined;
+          const maxBpm = zone.maxBeatsPerMinute !== undefined ? Number(zone.maxBeatsPerMinute) : undefined;
+          const minutes = zone.minutes !== undefined ? Number(zone.minutes) : (minBpm ?? 0);
+          entries.push(createEntry(zoneName, minutes, 'bpm', undefined, undefined, minBpm, maxBpm));
         }
       }
       if (entries.length > 0) return entries;

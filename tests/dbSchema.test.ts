@@ -14,6 +14,8 @@ describe('dbSchema verification', () => {
     expect(columns.endTime.notNull).toBe(true);
     expect(columns).toHaveProperty('valueNumeric');
     expect(columns).toHaveProperty('valueText');
+    expect(columns).toHaveProperty('valueMin');
+    expect(columns).toHaveProperty('valueMax');
     expect(columns).toHaveProperty('unit');
     expect(columns).toHaveProperty('dimension');
     expect(columns).toHaveProperty('sourceStream');

@@ -215,6 +215,35 @@ describe('GoogleHealthAdapter Sync & Range Splitting', () => {
     expect(diastolicEntry?.unit).toBe('mmHg');
     expect(diastolicEntry?.metricType).toBe('blood-pressure');
     expect(diastolicEntry?.externalId).toBe('users/me/dataTypes/blood-pressure/dataPoints/bp_sample_01_diastolic');
+    // 6. Daily heart rate zones with valueMin and valueMax
+    const dhrzPoint = {
+      name: 'users/me/dataTypes/daily-heart-rate-zones/dataPoints/dhrz_01',
+      userId: 'user_1',
+      metricType: 'daily-heart-rate-zones',
+      dailyHeartRateZones: {
+        date: { year: 2026, month: 8, day: 20 },
+        heartRateZones: [
+          { heartRateZoneType: 'OUT_OF_ZONE', minBeatsPerMinute: '30', maxBeatsPerMinute: '101' },
+          { heartRateZoneType: 'FAT_BURN', minBeatsPerMinute: '102', maxBeatsPerMinute: '122' },
+          { heartRateZoneType: 'CARDIO', minBeatsPerMinute: '123', maxBeatsPerMinute: '148' },
+          { heartRateZoneType: 'PEAK', minBeatsPerMinute: '149', maxBeatsPerMinute: '220' },
+        ],
+      },
+    };
+    const mappedZones = adapter.mapToNormalizedSchema(dhrzPoint);
+    expect(mappedZones).toHaveLength(4);
+
+    const fatBurn = mappedZones.find((z) => z.dimension === 'fat_burn');
+    expect(fatBurn).toBeDefined();
+    expect(fatBurn?.valueMin).toBe(102);
+    expect(fatBurn?.valueMax).toBe(122);
+    expect(fatBurn?.unit).toBe('bpm');
+    expect(fatBurn?.metricType).toBe('daily-heart-rate-zones');
+
+    const peak = mappedZones.find((z) => z.dimension === 'peak');
+    expect(peak).toBeDefined();
+    expect(peak?.valueMin).toBe(149);
+    expect(peak?.valueMax).toBe(220);
   });
 
   test('sync method skips metrics with 403 MISSING_OAUTH_SCOPE gracefully without failing entire batch', async () => {

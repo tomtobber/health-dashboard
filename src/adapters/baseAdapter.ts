@@ -42,6 +42,8 @@ export interface NormalizedMetricEntry {
   endTime: Date;
   valueNumeric?: number;
   valueText?: string;
+  valueMin?: number;
+  valueMax?: number;
   unit: string;
   dimension?: string;
   sourceStream: 'raw' | 'reconciled';
