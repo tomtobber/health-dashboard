@@ -1,5 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
 import { z } from 'zod';
 import { authRouter } from './routes/authRoutes';
 import { connectRouter } from './routes/connectRoutes';
@@ -7,6 +9,7 @@ import { webhookRouter } from './routes/webhookRoutes';
 import { syncRouter } from './routes/syncRoutes';
 import { metricDefinitionRouter } from './routes/metricDefinitionRoutes';
 import { manualEntryRouter } from './routes/manualEntryRoutes';
+import { dashboardViewRouter } from './routes/dashboardViewRoutes';
 import { AppError } from './errors/AppError';
 import { logger } from './utils/logger';
 
@@ -15,15 +18,32 @@ export const app = express();
 app.use(cors());
 app.use(express.json());
 
+// API Routes
 app.use('/api/auth', authRouter);
 app.use('/api/connect', connectRouter);
 app.use('/api/webhooks', webhookRouter);
 app.use('/api/sync', syncRouter);
 app.use('/api/metric-definitions', metricDefinitionRouter);
 app.use('/api/metric-entries', manualEntryRouter);
+app.use('/api/dashboard-views', dashboardViewRouter);
 
 app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Serve frontend static assets from client/dist if present
+const clientDistPath = path.join(__dirname, '../client/dist');
+app.use(express.static(clientDistPath));
+
+// Express 4 & 5 safe pathless SPA fallback handler (registered strictly after all /api and /health routes)
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.method === 'GET' && !req.path.startsWith('/api') && req.path !== '/health') {
+    const indexPath = path.join(clientDistPath, 'index.html');
+    if (fs.existsSync(indexPath)) {
+      return res.sendFile(indexPath);
+    }
+  }
+  next();
 });
 
 // Centralized Error Handling Middleware complying with Constraints #1, #2, #8

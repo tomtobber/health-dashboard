@@ -35,8 +35,10 @@ invariants that enforce this.
    third-party data sources beyond Google Health (e.g. a calorie-tracking
    app), each plugging into the same sync + storage model via a common
    adapter interface.
-5. **Customizable charts** — User-configurable dashboard: pick metric(s),
-   time range, aggregation, and chart type; save as named views.
+5. **Customizable charts & web app** *(complete)* — User-configurable dashboard:
+   pick metric(s), time range, aggregation, and chart type; save as named views
+   backed by `dashboard_views`. Multi-metric overlay frontend built in React +
+   Vite + Recharts.
 6. **Conclusions / insights** — Start with descriptive statistics only
    (personal baselines, trend detection, correlation between user-chosen
    metric pairs). Explicitly out of scope until this phase, and even then,

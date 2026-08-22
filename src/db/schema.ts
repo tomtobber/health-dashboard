@@ -82,3 +82,28 @@ export const syncRuns = pgTable('sync_runs', {
   startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
   completedAt: timestamp('completed_at', { withTimezone: true }),
 });
+
+export interface DashboardPanelConfig {
+  id: string;
+  metricTypes: string[];
+  timeRange:
+    | { type: 'relative'; value: 'last_24h' | 'last_7d' | 'last_30d' | 'last_90d' | 'last_1y' }
+    | { type: 'absolute'; startTime: string; endTime: string };
+  aggregation: 'raw' | '1m_avg' | '5m_avg' | 'daily_avg';
+  chartType?: 'line' | 'bar';
+}
+
+export interface DashboardViewConfig {
+  panels: DashboardPanelConfig[];
+}
+
+export const dashboardViews = pgTable('dashboard_views', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  name: text('name').notNull(),
+  config: jsonb('config').$type<DashboardViewConfig>().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  userNameIdx: uniqueIndex('dashboard_views_user_name_idx').on(table.userId, table.name),
+}));

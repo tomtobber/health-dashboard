@@ -20,5 +20,5 @@
     '@typescript-eslint/no-misused-promises': 'error',
     'no-console': 'off',
   },
-  ignorePatterns: ['dist/', 'node_modules/', 'coverage/', '*.js'],
+  ignorePatterns: ['dist/', 'node_modules/', 'coverage/', 'client/', '*.js'],
 };

@@ -4,7 +4,7 @@
     env: node
     region: frankfurt
     plan: free
-    buildCommand: npm install && npm run build
+    buildCommand: npm install && npm --prefix client install && npm run build
     startCommand: npm start
     autoDeploy: true
     envVars:

@@ -4,7 +4,7 @@
   "description": "Personal Health Dashboard - Aggregates health & lifestyle metrics",
   "main": "dist/server.js",
   "scripts": {
-    "build": "tsc",
+    "build": "npm run build:backend && npm run build:client",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings=0",
     "start": "node --max-old-space-size=450 dist/server.js",
@@ -14,7 +14,10 @@
     "db:push": "drizzle-kit push",
     "test": "jest --runInBand",
     "test:subscriber-types": "tsx src/scripts/testAllDataTypes.ts",
-    "db:migrate:phase3": "tsx src/scripts/migratePhase3.ts"
+    "db:migrate:phase3": "tsx src/scripts/migratePhase3.ts",
+    "build:backend": "tsc",
+    "build:client": "npm --prefix client run build",
+    "db:migrate:phase5": "tsx src/scripts/migratePhase5.ts"
   },
   "keywords": [],
   "author": "",

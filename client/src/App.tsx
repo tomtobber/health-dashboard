@@ -1,0 +1,240 @@
+import React, { useState, useEffect } from 'react';
+import { Header } from './components/Header';
+import { SavedViewsBar } from './components/SavedViewsBar';
+import { MultiMetricPanel } from './components/MultiMetricPanel';
+import { PanelConfigModal } from './components/PanelConfigModal';
+import { ManualEntryModal } from './components/ManualEntryModal';
+import { MetricDefinitionModal } from './components/MetricDefinitionModal';
+import { AuthModal } from './components/AuthModal';
+import {
+  DashboardView,
+  DashboardPanelConfig,
+  MetricDefinition,
+} from './types';
+import { api, setToken } from './services/api';
+import { Plus } from 'lucide-react';
+
+const DEFAULT_PANELS: DashboardPanelConfig[] = [
+  {
+    id: 'panel-cardio',
+    metricTypes: ['heart-rate', 'daily-resting-heart-rate', 'steps'],
+    timeRange: { type: 'relative', value: 'last_7d' },
+    aggregation: 'daily_avg',
+    chartType: 'line',
+  },
+  {
+    id: 'panel-recovery',
+    metricTypes: ['sleep', 'daily-heart-rate-variability'],
+    timeRange: { type: 'relative', value: 'last_30d' },
+    aggregation: 'daily_avg',
+    chartType: 'line',
+  },
+];
+
+export const App: React.FC = () => {
+  const [user, setUser] = useState<{ id: string; email: string } | null>(null);
+  const [views, setViews] = useState<DashboardView[]>([]);
+  const [activeViewId, setActiveViewId] = useState<string | null>(null);
+  const [panels, setPanels] = useState<DashboardPanelConfig[]>(DEFAULT_PANELS);
+  const [definitions, setDefinitions] = useState<MetricDefinition[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [googleStatus, setGoogleStatus] = useState('offline');
+
+  // Modals state
+  const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [isLogOpen, setIsLogOpen] = useState(false);
+  const [isDefOpen, setIsDefOpen] = useState(false);
+  const [editingPanel, setEditingPanel] = useState<DashboardPanelConfig | null | 'new'>(null);
+
+  // Initialize app
+  const initApp = async () => {
+    try {
+      const userData = await api.getCurrentUser();
+      setUser(userData.user);
+      loadUserData();
+    } catch {
+      // Not logged in or token expired
+    }
+  };
+
+  const loadUserData = async () => {
+    try {
+      const [viewsList, defsList, accounts] = await Promise.all([
+        api.listDashboardViews().catch(() => []),
+        api.listMetricDefinitions(true).catch(() => []),
+        api.getConnectedAccounts().catch(() => []),
+      ]);
+
+      setViews(viewsList);
+      setDefinitions(defsList);
+
+      const googleAcc = accounts.find((a) => a.provider === 'google_health');
+      setGoogleStatus(googleAcc ? googleAcc.status : 'offline');
+
+      if (viewsList.length > 0 && !activeViewId) {
+        setActiveViewId(viewsList[0].id);
+        setPanels(viewsList[0].config.panels);
+      }
+    } catch {
+      // Ignored
+    }
+  };
+
+  useEffect(() => {
+    initApp();
+  }, []);
+
+  const handleLogout = () => {
+    setToken(null);
+    setUser(null);
+    setViews([]);
+    setActiveViewId(null);
+    setPanels(DEFAULT_PANELS);
+  };
+
+  const handleSelectView = (view: DashboardView) => {
+    setActiveViewId(view.id);
+    setPanels(view.config.panels);
+  };
+
+  const handleSaveCurrentView = async (name: string) => {
+    const saved = await api.createDashboardView(name, { panels });
+    setViews([...views, saved]);
+    setActiveViewId(saved.id);
+  };
+
+  const handleUpdateView = async (viewId: string) => {
+    const updated = await api.updateDashboardView(viewId, { config: { panels } });
+    setViews(views.map((v) => (v.id === viewId ? updated : v)));
+  };
+
+  const handleDeleteView = async (viewId: string) => {
+    await api.deleteDashboardView(viewId);
+    const remaining = views.filter((v) => v.id !== viewId);
+    setViews(remaining);
+    if (remaining.length > 0) {
+      setActiveViewId(remaining[0].id);
+      setPanels(remaining[0].config.panels);
+    } else {
+      setActiveViewId(null);
+      setPanels(DEFAULT_PANELS);
+    }
+  };
+
+  const handleTriggerSync = async () => {
+    setIsSyncing(true);
+    try {
+      await api.triggerSync('manual');
+      setTimeout(() => {
+        setIsSyncing(false);
+      }, 2000);
+    } catch {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleSavePanelConfig = (config: DashboardPanelConfig) => {
+    if (editingPanel === 'new') {
+      setPanels([...panels, config]);
+    } else if (editingPanel) {
+      setPanels(panels.map((p) => (p.id === editingPanel.id ? config : p)));
+    }
+    setEditingPanel(null);
+  };
+
+  const handleRemovePanel = (panelId: string) => {
+    setPanels(panels.filter((p) => p.id !== panelId));
+  };
+
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <Header
+        user={user}
+        onOpenAuth={() => setIsAuthOpen(true)}
+        onLogout={handleLogout}
+        onOpenLogModal={() => setIsLogOpen(true)}
+        onOpenDefModal={() => setIsDefOpen(true)}
+        onAddPanel={() => setEditingPanel('new')}
+        onTriggerSync={handleTriggerSync}
+        isSyncing={isSyncing}
+        googleStatus={googleStatus}
+      />
+
+      {user && (
+        <SavedViewsBar
+          views={views}
+          activeViewId={activeViewId}
+          onSelectView={handleSelectView}
+          onSaveCurrentView={handleSaveCurrentView}
+          onUpdateView={handleUpdateView}
+          onDeleteView={handleDeleteView}
+          onNewEmptyLayout={() => {
+            setActiveViewId(null);
+            setPanels(DEFAULT_PANELS);
+          }}
+        />
+      )}
+
+      {/* Main Grid of Multi-Metric Panels */}
+      <main style={{ flex: 1, padding: '0 1rem 2rem 1rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(560px, 1fr))', gap: '1.25rem', alignItems: 'start' }}>
+        {panels.map((panel) => (
+          <MultiMetricPanel
+            key={panel.id}
+            panel={panel}
+            onEdit={() => setEditingPanel(panel)}
+            onRemove={() => handleRemovePanel(panel.id)}
+          />
+        ))}
+
+        {panels.length === 0 && (
+          <div className="glass-panel" style={{ gridColumn: '1 / -1', padding: '3rem 1rem', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', color: 'var(--text-muted)' }}>
+            <h3>No Active Chart Panels</h3>
+            <p style={{ fontSize: '0.875rem' }}>Add a panel to compare multiple health and lifestyle metrics on a single canvas.</p>
+            <button className="btn btn-primary" onClick={() => setEditingPanel('new')}>
+              <Plus size={16} /> Add Panel
+            </button>
+          </div>
+        )}
+      </main>
+
+      {/* Modals */}
+      {isAuthOpen && (
+        <AuthModal
+          onSuccess={(u) => {
+            setUser(u);
+            loadUserData();
+          }}
+          onClose={() => setIsAuthOpen(false)}
+        />
+      )}
+
+      {isLogOpen && (
+        <ManualEntryModal
+          definitions={definitions}
+          onSuccess={() => {
+            loadUserData();
+          }}
+          onClose={() => setIsLogOpen(false)}
+        />
+      )}
+
+      {isDefOpen && (
+        <MetricDefinitionModal
+          onSuccess={() => {
+            loadUserData();
+          }}
+          onClose={() => setIsDefOpen(false)}
+        />
+      )}
+
+      {editingPanel && (
+        <PanelConfigModal
+          panel={editingPanel === 'new' ? null : editingPanel}
+          definitions={definitions}
+          onSave={handleSavePanelConfig}
+          onClose={() => setEditingPanel(null)}
+        />
+      )}
+    </div>
+  );
+};
