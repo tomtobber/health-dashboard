@@ -125,9 +125,10 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
   }, [user?.id, panel.metricTypes, startTimeStr, endTimeStr, panel.aggregation]);
 
   // Separate metrics by valueType
-  const numericMetrics = useMemo(() => data.filter((d) => d.valueType === 'numeric' || d.valueType === 'duration'), [data]);
-  const booleanMetrics = useMemo(() => data.filter((d) => d.valueType === 'boolean'), [data]);
-  const categoryMetrics = useMemo(() => data.filter((d) => d.valueType === 'category'), [data]);
+  const safeData = useMemo(() => Array.isArray(data) ? data : [], [data]);
+  const numericMetrics = useMemo(() => safeData.filter((d) => d && (d.valueType === 'numeric' || d.valueType === 'duration')), [safeData]);
+  const booleanMetrics = useMemo(() => safeData.filter((d) => d && d.valueType === 'boolean'), [safeData]);
+  const categoryMetrics = useMemo(() => safeData.filter((d) => d && d.valueType === 'category'), [safeData]);
 
   // Merge timelines into unified array of time buckets for Recharts
   const chartData = useMemo(() => {

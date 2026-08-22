@@ -113,10 +113,10 @@ export const api = {
 
   // Metric Definitions
   async listMetricDefinitions(includeArchived = false): Promise<MetricDefinition[]> {
-    const res = await request<{ metricDefinitions: MetricDefinition[] }>(
+    const res = await request<{ metricDefinitions?: MetricDefinition[] }>(
       `/api/metric-definitions${includeArchived ? '?includeArchived=true' : ''}`
     );
-    return res.metricDefinitions;
+    return res.metricDefinitions || [];
   },
 
   async createMetricDefinition(params: {
@@ -157,10 +157,10 @@ export const api = {
     if (params.dimension) query.append('dimension', params.dimension);
     if (params.aggregation) query.append('aggregation', params.aggregation);
 
-    const res = await request<{ results: EnrichedMetricQueryResult[] }>(
+    const res = await request<{ results?: EnrichedMetricQueryResult[]; metrics?: EnrichedMetricQueryResult[] }>(
       `/api/metric-entries?${query.toString()}`
     );
-    return res.results;
+    return res.metrics || res.results || [];
   },
 
   async logManualEntry(params: {
@@ -203,8 +203,8 @@ export const api = {
 
   // Dashboard Views
   async listDashboardViews(): Promise<DashboardView[]> {
-    const res = await request<{ dashboardViews: DashboardView[] }>('/api/dashboard-views');
-    return res.dashboardViews;
+    const res = await request<{ dashboardViews?: DashboardView[] }>('/api/dashboard-views');
+    return res.dashboardViews || [];
   },
 
   async getDashboardView(id: string): Promise<DashboardView> {

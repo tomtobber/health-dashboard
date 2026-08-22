@@ -110,7 +110,7 @@ export const App: React.FC = () => {
 
   const handleDeleteView = async (viewId: string) => {
     await api.deleteDashboardView(viewId);
-    const remaining = views.filter((v) => v.id !== viewId);
+    const remaining = (Array.isArray(views) ? views : []).filter((v) => v.id !== viewId);
     setViews(remaining);
     if (remaining.length > 0) {
       setActiveViewId(remaining[0].id);
@@ -143,7 +143,7 @@ export const App: React.FC = () => {
   };
 
   const handleRemovePanel = (panelId: string) => {
-    setPanels(panels.filter((p) => p.id !== panelId));
+    setPanels((Array.isArray(panels) ? panels : []).filter((p) => p.id !== panelId));
   };
 
   return (
