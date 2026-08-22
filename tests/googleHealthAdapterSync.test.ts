@@ -235,6 +235,7 @@ describe('GoogleHealthAdapter Sync & Range Splitting', () => {
 
     const fatBurn = mappedZones.find((z) => z.dimension === 'fat_burn');
     expect(fatBurn).toBeDefined();
+    expect(fatBurn?.valueNumeric).toBeUndefined();
     expect(fatBurn?.valueMin).toBe(102);
     expect(fatBurn?.valueMax).toBe(122);
     expect(fatBurn?.unit).toBe('bpm');
