@@ -112,7 +112,6 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
         metric_types: panel.metricTypes,
         start_time: startTimeStr,
         end_time: endTimeStr,
-        aggregation: panel.aggregation,
       });
       setData(results);
     } catch (err: unknown) {
@@ -132,28 +131,60 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
   const booleanMetrics = useMemo(() => safeData.filter((d) => d && d.valueType === 'boolean'), [safeData]);
   const categoryMetrics = useMemo(() => safeData.filter((d) => d && d.valueType === 'category'), [safeData]);
 
-  // Merge timelines into unified array of time buckets for Recharts
+  // Merge timelines into unified array of time buckets for Recharts (with smart daily aggregation)
   const chartData = useMemo(() => {
-    const timeMap = new Map<string, { time: string; timestamp: number; [key: string]: any }>();
+    const isDaily = panel.aggregation === 'daily_avg' || (panel.timeRange.type === 'relative' && panel.timeRange.value !== 'last_24h');
+    const timeMap = new Map<string, { time: string; timestamp: number; _counts: Record<string, number>; [key: string]: any }>();
 
     for (const metric of numericMetrics) {
+      const isSumMetric = metric.metricType === 'steps' || metric.metricType === 'sleep' || metric.metricType === 'water-intake';
+
       for (const entry of metric.entries) {
-        const timeKey = entry.startTime;
-        const ts = new Date(timeKey).getTime();
+        if (entry.valueNumeric === undefined || entry.valueNumeric === null) continue;
+        
+        const rawDate = typeof entry.startTime === 'string' ? parseISO(entry.startTime) : new Date(entry.startTime);
+        if (isNaN(rawDate.getTime())) continue;
+
+        let timeKey: string;
+        let ts: number;
+
+        if (isDaily) {
+          timeKey = format(rawDate, 'yyyy-MM-dd');
+          ts = new Date(`${timeKey}T12:00:00.000Z`).getTime();
+        } else {
+          timeKey = rawDate.toISOString();
+          ts = rawDate.getTime();
+        }
+
         if (!timeMap.has(timeKey)) {
           timeMap.set(timeKey, {
             time: timeKey,
             timestamp: ts,
+            _counts: {},
           });
         }
+
         const point = timeMap.get(timeKey)!;
-        point[metric.metricType] = entry.valueNumeric;
+        const currentVal = point[metric.metricType];
+        const currentCount = point._counts[metric.metricType] || 0;
+
+        if (isDaily) {
+          if (isSumMetric) {
+            point[metric.metricType] = (currentVal || 0) + entry.valueNumeric;
+          } else {
+            const newTotal = (currentVal || 0) * currentCount + entry.valueNumeric;
+            point._counts[metric.metricType] = currentCount + 1;
+            point[metric.metricType] = Math.round((newTotal / (currentCount + 1)) * 10) / 10;
+          }
+        } else {
+          point[metric.metricType] = entry.valueNumeric;
+        }
       }
     }
 
     const sorted = Array.from(timeMap.values()).sort((a, b) => a.timestamp - b.timestamp);
     return sorted;
-  }, [numericMetrics]);
+  }, [numericMetrics, panel.aggregation]);
 
   // Collect discrete events for boolean / category overlays
   const discreteEvents = useMemo(() => {
@@ -225,9 +256,9 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
           )}
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginRight: '0.25rem' }}>
-            {formattedRangeLabel} ({panel.aggregation})
+            {formattedRangeLabel}
           </span>
           <button className="btn btn-secondary btn-icon" onClick={fetchData} title="Refresh panel data">
             <RefreshCw size={14} className={loading ? 'spin-anim' : ''} />

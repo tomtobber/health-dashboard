@@ -215,7 +215,7 @@ export async function queryBatchEnrichedMetrics(filter: BatchMetricQueryFilter):
     if (dimension) {
       whereConditions.push(eq(metricEntries.dimension, dimension));
     }
-    if (aggregation) {
+    if (aggregation && aggregation !== 'all' && aggregation !== 'auto' && aggregation !== 'daily_avg' && aggregation !== 'daily_sum') {
       whereConditions.push(eq(metricEntries.aggregation, aggregation));
     }
 
