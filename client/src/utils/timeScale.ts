@@ -4,7 +4,7 @@ import { EnrichedMetricQueryResult } from '../types';
 export interface ChartTimelinePoint {
   time: string;
   timestamp: number;
-  [metricType: string]: any;
+  [metricType: string]: string | number | undefined;
 }
 
 export function buildChartTimelineData(
