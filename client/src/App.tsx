@@ -84,6 +84,18 @@ export const App: React.FC = () => {
     initApp();
   }, []);
 
+
+  const handleConnectGoogle = async () => {
+    try {
+      const res = await api.getGoogleAuthUrl();
+      if (res && (res.authUrl || res.url)) {
+        window.location.href = res.authUrl || res.url;
+      }
+    } catch (err: unknown) {
+      console.error('Failed to get Google Auth URL:', err);
+    }
+  };
+
   const handleLogout = () => {
     setToken(null);
     setUser(null);
@@ -164,6 +176,7 @@ export const App: React.FC = () => {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <Header
+        onConnectGoogle={handleConnectGoogle}
         user={user}
         onOpenAuth={() => setIsAuthOpen(true)}
         onLogout={handleLogout}

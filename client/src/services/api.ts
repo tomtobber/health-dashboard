@@ -236,10 +236,14 @@ export const api = {
 
   // Connected Accounts / Sync
   async getConnectedAccounts(): Promise<Array<{ provider: string; status: string; healthUserId?: string }>> {
-    const res = await request<{ accounts: Array<{ provider: string; status: string; healthUserId?: string }> }>(
-      '/api/connect/accounts'
-    ).catch(() => ({ accounts: [] }));
-    return res.accounts || [];
+    const res = await request<{ connectedAccounts?: Array<{ provider: string; status: string; healthUserId?: string }> }>(
+      '/api/connect/status'
+    ).catch(() => ({ connectedAccounts: [] }));
+    return res.connectedAccounts || [];
+  },
+
+  async getGoogleAuthUrl(): Promise<{ authUrl: string; url: string }> {
+    return request<{ authUrl: string; url: string }>('/api/connect/google/authorize');
   },
 
   async seedDemoData(): Promise<{ success: boolean; count: number; message: string }> {

@@ -9,6 +9,7 @@ interface HeaderProps {
   onOpenDefModal: () => void;
   onAddPanel: () => void;
   onTriggerSync: () => void;
+  onConnectGoogle?: () => void;
   isSyncing: boolean;
   googleStatus: string;
 }
@@ -21,6 +22,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenDefModal,
   onAddPanel,
   onTriggerSync,
+  onConnectGoogle,
   isSyncing,
   googleStatus,
 }) => {
@@ -35,10 +37,27 @@ export const Header: React.FC<HeaderProps> = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '2px' }}>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Multi-Metric Analytics</span>
             <span style={{ width: '4px', height: '4px', borderRadius: '50%', background: 'var(--text-muted)' }}></span>
-            <span style={{ fontSize: '0.75rem', color: googleStatus === 'active' ? '#10b981' : '#f59e0b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <button
+              type="button"
+              onClick={googleStatus === 'active' ? onTriggerSync : onConnectGoogle}
+              style={{
+                fontSize: '0.75rem',
+                color: googleStatus === 'active' ? '#10b981' : '#f59e0b',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                background: googleStatus === 'active' ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)',
+                border: '1px solid',
+                borderColor: googleStatus === 'active' ? 'rgba(16,185,129,0.3)' : 'rgba(245,158,11,0.3)',
+                borderRadius: '6px',
+                padding: '2px 8px',
+                cursor: 'pointer',
+              }}
+              title={googleStatus === 'active' ? 'Google Health connected (Click to sync)' : 'Click to connect Google Health'}
+            >
               <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: googleStatus === 'active' ? '#10b981' : '#f59e0b' }}></span>
-              Google: {googleStatus === 'active' ? 'Connected' : 'Offline / Standby'}
-            </span>
+              Google: {googleStatus === 'active' ? 'Connected' : 'Offline / Click to Connect'}
+            </button>
           </div>
         </div>
       </div>
