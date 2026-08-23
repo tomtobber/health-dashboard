@@ -11,10 +11,10 @@ export function formatDurationValue(value: number, unit: string | null): string 
 }
 
 
-function formatTimestampSafely(val?: string | null, fmt = 'PPP p'): string {
-  if (!val) return '';
+function formatTimestampSafely(val?: string | number | Date | null, fmt = 'PPP p'): string {
+  if (val === undefined || val === null || val === '') return '';
   try {
-    const d = typeof val === 'string' ? parseISO(val) : new Date(val);
+    const d = typeof val === 'number' ? new Date(val) : (typeof val === 'string' ? parseISO(val) : val);
     if (isNaN(d.getTime())) return String(val);
     return format(d, fmt);
   } catch {
@@ -372,12 +372,17 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
               <BarChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                 <XAxis
-                  dataKey="time"
-                  tickFormatter={(t) => {
+                  dataKey="timestamp"
+                  type="number"
+                  scale="time"
+                  domain={['dataMin', 'dataMax']}
+                  tickFormatter={(ts) => {
                     try {
-                      return format(parseISO(t), 'MMM d');
+                      const d = new Date(Number(ts));
+                      if (isNaN(d.getTime())) return '';
+                      return format(d, panel.timeRange.type === 'relative' && panel.timeRange.value === 'last_24h' ? 'p' : 'MMM d');
                     } catch {
-                      return t;
+                      return '';
                     }
                   }}
                   stroke="#64748b"
@@ -435,12 +440,17 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
               <LineChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                 <XAxis
-                  dataKey="time"
-                  tickFormatter={(t) => {
+                  dataKey="timestamp"
+                  type="number"
+                  scale="time"
+                  domain={['dataMin', 'dataMax']}
+                  tickFormatter={(ts) => {
                     try {
-                      return format(parseISO(t), 'MMM d');
+                      const d = new Date(Number(ts));
+                      if (isNaN(d.getTime())) return '';
+                      return format(d, panel.timeRange.type === 'relative' && panel.timeRange.value === 'last_24h' ? 'p' : 'MMM d');
                     } catch {
-                      return t;
+                      return '';
                     }
                   }}
                   stroke="#64748b"
@@ -494,6 +504,7 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
                     strokeWidth={2.5}
                     dot={{ r: 2 }}
                     activeDot={{ r: 5 }}
+                    connectNulls={true}
                   />
                 ))}
               </LineChart>
