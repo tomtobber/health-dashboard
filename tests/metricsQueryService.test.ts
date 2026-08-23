@@ -6,7 +6,7 @@ import {
 } from '../src/services/metricsQueryService';
 import { NormalizedMetricEntry } from '../src/adapters/baseAdapter';
 import { db, pool } from '../src/db';
-import { users, metricEntries } from '../src/db/schema';
+import { users, metricEntries, metricDefinitions } from '../src/db/schema';
 import { eq } from 'drizzle-orm';
 
 describe('Metrics Canonical Query Path & SQL Daily Aggregation', () => {
@@ -24,6 +24,26 @@ describe('Metrics Canonical Query Path & SQL Daily Aggregation', () => {
       .returning();
 
     testUserId = user.id;
+
+    // Create custom metric definitions:
+    // 1. custom-hydration (unit: 'ml', cumulative -> should SUM)
+    // 2. custom-caffeine (unit: 'mg/dL', continuous -> should AVG)
+    await db.insert(metricDefinitions).values([
+      {
+        userId: testUserId,
+        metricType: 'custom-hydration',
+        displayName: 'Custom Hydration',
+        valueType: 'numeric',
+        unit: 'ml',
+      },
+      {
+        userId: testUserId,
+        metricType: 'custom-caffeine',
+        displayName: 'Blood Caffeine Level',
+        valueType: 'numeric',
+        unit: 'mg/dL',
+      },
+    ]);
 
     // Seed mock high-frequency heart rate entries across 3 distinct days:
     // Day 1: 2026-08-01 (10 entries: 5 at 60 bpm, 5 at 80 bpm -> Expected Daily Avg: 70 bpm)
@@ -101,7 +121,7 @@ describe('Metrics Canonical Query Path & SQL Daily Aggregation', () => {
 
     await db.insert(metricEntries).values(hrEntries);
 
-    // Seed steps entries on Day 1 & Day 2 (cumulative metric)
+    // Seed steps entries on Day 1 & Day 2 (cumulative canonical metric)
     await db.insert(metricEntries).values([
       {
         userId: testUserId,
@@ -141,6 +161,60 @@ describe('Metrics Canonical Query Path & SQL Daily Aggregation', () => {
       },
     ]);
 
+    // Seed custom metric entries
+    await db.insert(metricEntries).values([
+      // custom-hydration on Day 1: 500ml + 750ml = 1250ml (SUM)
+      {
+        userId: testUserId,
+        provider: 'manual',
+        metricType: 'custom-hydration',
+        startTime: new Date('2026-08-01T08:00:00Z'),
+        endTime: new Date('2026-08-01T08:05:00Z'),
+        valueNumeric: 500,
+        unit: 'ml',
+        dimension: 'default',
+        sourceStream: 'raw',
+        aggregation: 'raw',
+      },
+      {
+        userId: testUserId,
+        provider: 'manual',
+        metricType: 'custom-hydration',
+        startTime: new Date('2026-08-01T13:00:00Z'),
+        endTime: new Date('2026-08-01T13:05:00Z'),
+        valueNumeric: 750,
+        unit: 'ml',
+        dimension: 'default',
+        sourceStream: 'raw',
+        aggregation: 'raw',
+      },
+      // custom-caffeine on Day 1: 4.0 mg/dL and 6.0 mg/dL -> Avg: 5.0 mg/dL (AVG)
+      {
+        userId: testUserId,
+        provider: 'manual',
+        metricType: 'custom-caffeine',
+        startTime: new Date('2026-08-01T09:00:00Z'),
+        endTime: new Date('2026-08-01T09:05:00Z'),
+        valueNumeric: 4.0,
+        unit: 'mg/dL',
+        dimension: 'default',
+        sourceStream: 'raw',
+        aggregation: 'raw',
+      },
+      {
+        userId: testUserId,
+        provider: 'manual',
+        metricType: 'custom-caffeine',
+        startTime: new Date('2026-08-01T15:00:00Z'),
+        endTime: new Date('2026-08-01T15:05:00Z'),
+        valueNumeric: 6.0,
+        unit: 'mg/dL',
+        dimension: 'default',
+        sourceStream: 'raw',
+        aggregation: 'raw',
+      },
+    ]);
+
     // Seed sleep entry with summary and stage breakdowns on Day 1
     await db.insert(metricEntries).values([
       {
@@ -149,7 +223,7 @@ describe('Metrics Canonical Query Path & SQL Daily Aggregation', () => {
         metricType: 'sleep',
         startTime: new Date('2026-08-01T22:00:00Z'),
         endTime: new Date('2026-08-02T06:00:00Z'),
-        valueNumeric: 480, // 8 hours total
+        valueNumeric: 480,
         unit: 'minutes',
         dimension: 'summary',
         sourceStream: 'reconciled',
@@ -185,6 +259,7 @@ describe('Metrics Canonical Query Path & SQL Daily Aggregation', () => {
   afterAll(async () => {
     if (testUserId) {
       await db.delete(metricEntries).where(eq(metricEntries.userId, testUserId));
+      await db.delete(metricDefinitions).where(eq(metricDefinitions.userId, testUserId));
       await db.delete(users).where(eq(users.id, testUserId));
     }
   });
@@ -241,11 +316,11 @@ describe('Metrics Canonical Query Path & SQL Daily Aggregation', () => {
     expect(batchResults).toHaveLength(1);
     const hrResult = batchResults[0];
     expect(hrResult.metricType).toBe('heart-rate');
-    expect(hrResult.entries).toHaveLength(3); // Exactly 3 days, not 20 underlying rows!
+    expect(hrResult.entries).toHaveLength(3);
 
-    expect(hrResult.entries[0].valueNumeric).toBe(70); // (5*60 + 5*80) / 10 = 70
-    expect(hrResult.entries[1].valueNumeric).toBe(100); // (4*100) / 4 = 100
-    expect(hrResult.entries[2].valueNumeric).toBe(70); // (3*50 + 3*90) / 6 = 70
+    expect(hrResult.entries[0].valueNumeric).toBe(70);
+    expect(hrResult.entries[1].valueNumeric).toBe(100);
+    expect(hrResult.entries[2].valueNumeric).toBe(70);
   });
 
   test('queryBatchEnrichedMetrics and queryEnrichedMetricEntries and queryMetricEntriesFromDb return identical daily values', async () => {
@@ -289,7 +364,7 @@ describe('Metrics Canonical Query Path & SQL Daily Aggregation', () => {
     }
   });
 
-  test('Cumulative metric (steps) computes daily sum in SQL', async () => {
+  test('Cumulative canonical metric (steps) computes daily sum in SQL', async () => {
     const startRange = new Date('2026-08-01T00:00:00Z');
     const endRange = new Date('2026-08-04T00:00:00Z');
 
@@ -301,9 +376,32 @@ describe('Metrics Canonical Query Path & SQL Daily Aggregation', () => {
       aggregation: 'daily_avg',
     });
 
-    expect(stepsRes.entries).toHaveLength(2); // Day 1 & Day 2
+    expect(stepsRes.entries).toHaveLength(2);
     expect(stepsRes.entries[0].valueNumeric).toBe(7500); // 3000 + 4500 = 7500
     expect(stepsRes.entries[1].valueNumeric).toBe(8000);
+  });
+
+  test('Custom cumulative metric (custom-hydration) dynamically resolves to SUM and custom continuous (custom-caffeine) resolves to AVG', async () => {
+    const startRange = new Date('2026-08-01T00:00:00Z');
+    const endRange = new Date('2026-08-04T00:00:00Z');
+
+    const results = await queryBatchEnrichedMetrics({
+      userId: testUserId,
+      metricTypes: ['custom-hydration', 'custom-caffeine'],
+      startTime: startRange,
+      endTime: endRange,
+      aggregation: 'daily_avg',
+    });
+
+    expect(results).toHaveLength(2);
+    const hydResult = results.find(r => r.metricType === 'custom-hydration')!;
+    const cafResult = results.find(r => r.metricType === 'custom-caffeine')!;
+
+    expect(hydResult.entries).toHaveLength(1);
+    expect(hydResult.entries[0].valueNumeric).toBe(1250); // 500 + 750 = 1250 (SUM)
+
+    expect(cafResult.entries).toHaveLength(1);
+    expect(cafResult.entries[0].valueNumeric).toBe(5.0); // (4.0 + 6.0) / 2 = 5.0 (AVG)
   });
 
   test('Sleep metric only aggregates summary dimension without double counting stages', async () => {
@@ -319,6 +417,6 @@ describe('Metrics Canonical Query Path & SQL Daily Aggregation', () => {
     });
 
     expect(sleepRes.entries).toHaveLength(1);
-    expect(sleepRes.entries[0].valueNumeric).toBe(480); // 480 minutes (8h), NOT 480 + 120 + 360 = 960!
+    expect(sleepRes.entries[0].valueNumeric).toBe(480);
   });
 });

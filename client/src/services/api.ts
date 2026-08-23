@@ -18,7 +18,7 @@ export class ApiError extends Error {
   }
 }
 
-const DEFAULT_TIMEOUT_MS = 10000;
+const DEFAULT_TIMEOUT_MS = 12000;
 
 export function getToken(): string | null {
   return localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
@@ -32,9 +32,9 @@ export function setToken(token: string | null) {
   }
 }
 
-async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+async function request<T>(endpoint: string, options: RequestInit & { timeoutMs?: number } = {}): Promise<T> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || DEFAULT_TIMEOUT_MS);
 
   const token = getToken();
   const headers: Record<string, string> = {

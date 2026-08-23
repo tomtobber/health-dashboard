@@ -37,6 +37,26 @@ export interface EnrichedMetricQueryResult {
   entries: NormalizedMetricEntry[];
 }
 
+/**
+ * Determine whether a metric (canonical or user-defined custom) represents a cumulative
+ * quantity that should be summed (SUM) rather than averaged (AVG) when aggregating daily.
+ */
+export function isCumulativeMetric(metricType: string, valueType?: string, unit?: string | null): boolean {
+  if (valueType === 'duration') return true;
+  const normalizedUnit = (unit || '').toLowerCase().trim();
+  const cumulativeUnits = new Set([
+    'count', 'steps', 'ml', 'oz', 'l', 'liter', 'liters',
+    'kcal', 'calories', 'points', 'reps', 'minutes', 'seconds', 'hours'
+  ]);
+  if (cumulativeUnits.has(normalizedUnit)) return true;
+
+  const cumulativeTypes = new Set([
+    'steps', 'water-intake', 'hydration-log', 'sleep', 'total-calories',
+    'active-zone-minutes', 'distance', 'floors-climbed', 'elevation-gain'
+  ]);
+  return cumulativeTypes.has(metricType.toLowerCase());
+}
+
 export function filterReconciledOverRaw(entries: MetricEntryWithDelete[]): NormalizedMetricEntry[] {
   const activeEntries = entries.filter((e) => !e.deletedAt);
 
@@ -68,11 +88,12 @@ export function filterReconciledOverRaw(entries: MetricEntryWithDelete[]): Norma
 
 /**
  * SQL-level Daily Aggregation Query for continuous and cumulative metrics.
- * Executes in Postgres, returning exactly 1 row per distinct calendar day per metric/dimension.
+ * Dynamically applies SUM vs AVG based on sumMetricTypes array, supporting custom & canonical metrics.
  */
 async function queryDailyAggregatedMetricsFromDb(
   userId: string,
   metricTypes: string[],
+  sumMetricTypes: string[],
   startTime: Date,
   endTime: Date,
   dimension?: string,
@@ -107,7 +128,7 @@ async function queryDailyAggregatedMetricsFromDb(
         AND start_time >= $3
         AND end_time <= $4
         AND deleted_at IS NULL
-        ${isSpecificDimension ? 'AND dimension = $6' : "AND (metric_type != 'sleep' OR dimension IN ('summary', 'default'))"}
+        ${isSpecificDimension ? 'AND dimension = $7' : "AND (metric_type != 'sleep' OR dimension IN ('summary', 'default'))"}
         AND value_numeric IS NOT NULL
     )
     SELECT
@@ -118,7 +139,7 @@ async function queryDailyAggregatedMetricsFromDb(
       day_bucket AS start_time,
       (day_bucket + interval '1 day' - interval '1 millisecond') AS end_time,
       CASE 
-        WHEN metric_type IN ('steps', 'water-intake', 'hydration-log', 'sleep', 'total-calories')
+        WHEN metric_type = ANY($6::text[])
           THEN ROUND(SUM(value_numeric)::numeric, 2)::double precision
         ELSE
           ROUND(AVG(value_numeric)::numeric, 2)::double precision
@@ -133,15 +154,15 @@ async function queryDailyAggregatedMetricsFromDb(
     ORDER BY day_bucket ASC;
   `;
 
-  const queryParams: unknown[] = [userId, metricTypes, startTime, endTime, targetAggregation];
+  const queryParams: unknown[] = [userId, metricTypes, startTime, endTime, targetAggregation, sumMetricTypes];
   if (isSpecificDimension) {
     queryParams.push(dimension);
   }
 
   const client = await pool.connect();
   try {
-    // Set explicit bounded statement timeout (15 seconds)
-    await client.query('SET statement_timeout = 15000');
+    // 8-second bounded statement timeout (safely under the 12s client timeout)
+    await client.query('SET statement_timeout = 8000');
     const result = await client.query<{
       user_id: string;
       provider: string;
@@ -278,9 +299,20 @@ export async function queryMetricEntriesFromDb(filter: MetricQueryFilter): Promi
     let entriesMap: Map<string, NormalizedMetricEntry[]>;
 
     if (isDaily) {
+      // Resolve cumulative status from metric definition or canonical catalog
+      const [def] = await db
+        .select()
+        .from(metricDefinitions)
+        .where(and(eq(metricDefinitions.userId, filter.userId), eq(metricDefinitions.metricType, filter.metricType)));
+
+      const isCumul = def 
+        ? isCumulativeMetric(def.metricType, def.valueType, def.unit)
+        : isCumulativeMetric(filter.metricType, getCanonicalProviderMetricMetadata(filter.metricType).valueType, getCanonicalProviderMetricMetadata(filter.metricType).unit);
+
       entriesMap = await queryDailyAggregatedMetricsFromDb(
         filter.userId,
         [filter.metricType],
+        isCumul ? [filter.metricType] : [],
         filter.startTime,
         filter.endTime,
         filter.dimension,
@@ -351,7 +383,23 @@ export async function queryBatchEnrichedMetrics(filter: BatchMetricQueryFilter):
       defMap.set(d.metricType, d);
     }
 
-    // 2. Query entries (SQL daily aggregation if daily, else scalar selection)
+    // 2. Identify cumulative metrics for dynamic SUM vs AVG aggregation
+    const sumMetricTypes: string[] = [];
+    for (const mt of metricTypes) {
+      const def = defMap.get(mt);
+      if (def) {
+        if (isCumulativeMetric(def.metricType, def.valueType, def.unit)) {
+          sumMetricTypes.push(mt);
+        }
+      } else {
+        const canonical = getCanonicalProviderMetricMetadata(mt);
+        if (isCumulativeMetric(mt, canonical.valueType, canonical.unit)) {
+          sumMetricTypes.push(mt);
+        }
+      }
+    }
+
+    // 3. Query entries (SQL daily aggregation if daily, else scalar selection)
     const isDaily = aggregation === 'daily_avg' || aggregation === 'daily_sum' || aggregation === 'daily';
     let entriesByMetric: Map<string, NormalizedMetricEntry[]>;
 
@@ -359,6 +407,7 @@ export async function queryBatchEnrichedMetrics(filter: BatchMetricQueryFilter):
       entriesByMetric = await queryDailyAggregatedMetricsFromDb(
         userId,
         metricTypes,
+        sumMetricTypes,
         startTime,
         endTime,
         dimension,
@@ -375,7 +424,7 @@ export async function queryBatchEnrichedMetrics(filter: BatchMetricQueryFilter):
       );
     }
 
-    // 3. Assemble enriched results for all requested metricTypes
+    // 4. Assemble enriched results for all requested metricTypes
     const results: EnrichedMetricQueryResult[] = [];
 
     for (const mt of metricTypes) {
