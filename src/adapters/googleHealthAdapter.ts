@@ -939,7 +939,10 @@ export class GoogleHealthAdapter implements ProviderAdapter {
     // 11. BLOOD GLUCOSE
     if (metricType === 'blood-glucose' || metricType === 'blood_glucose') {
       const bgObj = (nested || rawPoint.bloodGlucose || rawPoint['blood-glucose'] || rawPoint) as Record<string, unknown>;
-      const src = typeof bgObj?.measurementSource === 'string' ? String(bgObj.measurementSource).toLowerCase() : 'default';
+      
+      let timing = typeof bgObj?.measurementTiming === 'string' ? String(bgObj.measurementTiming).toLowerCase() : undefined;
+      if (!timing && typeof bgObj?.timing === 'string') timing = String(bgObj.timing).toLowerCase();
+      const dimension = timing || (typeof bgObj?.measurementSource === 'string' ? String(bgObj.measurementSource).toLowerCase() : 'default');
 
       let val: number | undefined = undefined;
       let unit = 'mg/dL';
@@ -951,10 +954,10 @@ export class GoogleHealthAdapter implements ProviderAdapter {
         val = Number(bgObj.bloodGlucoseMilligramsPerDeciliter);
         unit = 'mg/dL';
       } else if (typeof bgObj?.bloodGlucoseMmolPerLiter === 'number' && !isNaN(bgObj.bloodGlucoseMmolPerLiter)) {
-        val = bgObj.bloodGlucoseMmolPerLiter * 18.0182;
+        val = bgObj.bloodGlucoseMmolPerLiter * 18.018;
         unit = 'mg/dL';
       } else if (typeof bgObj?.bloodGlucoseMmolPerLiter === 'string' && !isNaN(Number(bgObj.bloodGlucoseMmolPerLiter))) {
-        val = Number(bgObj.bloodGlucoseMmolPerLiter) * 18.0182;
+        val = Number(bgObj.bloodGlucoseMmolPerLiter) * 18.018;
         unit = 'mg/dL';
       } else if (typeof bgObj?.bloodGlucoseConcentration === 'number' && !isNaN(bgObj.bloodGlucoseConcentration)) {
         val = bgObj.bloodGlucoseConcentration;
@@ -966,7 +969,9 @@ export class GoogleHealthAdapter implements ProviderAdapter {
         val = bgObj.valueNumeric;
       }
 
-      return [createEntry(src, val, unit)];
+      const valueText = val !== undefined ? `${(val / 18.018).toFixed(1)} mmol/L` : undefined;
+
+      return [createEntry(dimension, val, unit, valueText)];
     }
 
     // 12. BLOOD PRESSURE (Split into separate Systolic and Diastolic dimension entries)

@@ -261,7 +261,7 @@ describe('GoogleHealthAdapter Sync & Range Splitting', () => {
     expect(res.mappedEntries).toBeDefined();
     expect(res.mappedEntries!.length).toBeGreaterThan(0);
   });
-  test('maps real-world blood-glucose DataPoint with bloodGlucoseMilligramsPerDeciliter', () => {
+  test('maps real-world blood-glucose DataPoint with bloodGlucoseMilligramsPerDeciliter, measurementTiming dimension, and valueText mmol/L', () => {
     const adapter = new GoogleHealthAdapter();
     const rawPoint = {
       name: 'users/1291695626573082229/dataTypes/blood-glucose/dataPoints/1743882559054447128',
@@ -281,6 +281,7 @@ describe('GoogleHealthAdapter Sync & Range Splitting', () => {
           physicalTime: '2026-05-28T06:13:08.652Z',
         },
         measurementSource: 'SELF_MONITORING_BLOOD_GLUCOSE',
+        measurementTiming: 'FASTING',
         bloodGlucoseMilligramsPerDeciliter: 95.48268,
       },
     };
@@ -290,7 +291,8 @@ describe('GoogleHealthAdapter Sync & Range Splitting', () => {
     expect(mapped[0].metricType).toBe('blood-glucose');
     expect(mapped[0].valueNumeric).toBe(95.48268);
     expect(mapped[0].unit).toBe('mg/dL');
-    expect(mapped[0].dimension).toBe('self_monitoring_blood_glucose');
+    expect(mapped[0].dimension).toBe('fasting');
+    expect(mapped[0].valueText).toBe('5.3 mmol/L');
     expect(mapped[0].startTime.toISOString()).toBe('2026-05-28T06:13:08.652Z');
   });
 
