@@ -1,4 +1,12 @@
-﻿{
+{
   "extends": "./tsconfig.json",
-  "include": ["src/**/*", "tests/**/*", "drizzle.config.ts"]
+  "compilerOptions": {
+    "rootDir": "."
+  },
+  "include": [
+    "src/**/*",
+    "tests/**/*",
+    "scripts/**/*",
+    "drizzle.config.ts"
+  ]
 }
