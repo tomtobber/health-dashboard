@@ -418,5 +418,116 @@ describe('Metrics Canonical Query Path & SQL Daily Aggregation', () => {
 
     expect(sleepRes.entries).toHaveLength(1);
     expect(sleepRes.entries[0].valueNumeric).toBe(480);
+    });
+
+  test('Multi-metric overlay alignment: non-overlapping dense vs sparse metrics preserve true time-proportional coordinates', async () => {
+    // Seed Metric A (dense: daily on Day 1, Day 2, Day 3)
+    // Seed Metric B (sparse: weekly on Day 7, Day 14)
+    const metricAEntries = [
+      {
+        userId: testUserId,
+        provider: 'google_health',
+        metricType: 'daily-resting-heart-rate',
+        startTime: new Date('2026-08-01T00:00:00Z'),
+        endTime: new Date('2026-08-01T23:59:59Z'),
+        valueNumeric: 62,
+        unit: 'bpm',
+        dimension: 'default',
+        sourceStream: 'raw',
+        aggregation: 'daily_avg',
+      },
+      {
+        userId: testUserId,
+        provider: 'google_health',
+        metricType: 'daily-resting-heart-rate',
+        startTime: new Date('2026-08-02T00:00:00Z'),
+        endTime: new Date('2026-08-02T23:59:59Z'),
+        valueNumeric: 64,
+        unit: 'bpm',
+        dimension: 'default',
+        sourceStream: 'raw',
+        aggregation: 'daily_avg',
+      },
+      {
+        userId: testUserId,
+        provider: 'google_health',
+        metricType: 'daily-resting-heart-rate',
+        startTime: new Date('2026-08-03T00:00:00Z'),
+        endTime: new Date('2026-08-03T23:59:59Z'),
+        valueNumeric: 61,
+        unit: 'bpm',
+        dimension: 'default',
+        sourceStream: 'raw',
+        aggregation: 'daily_avg',
+      },
+    ];
+
+    const metricBEntries = [
+      {
+        userId: testUserId,
+        provider: 'manual',
+        metricType: 'weight',
+        startTime: new Date('2026-08-07T08:00:00Z'),
+        endTime: new Date('2026-08-07T08:05:00Z'),
+        valueNumeric: 78.5,
+        unit: 'kg',
+        dimension: 'default',
+        sourceStream: 'raw',
+        aggregation: 'raw',
+      },
+      {
+        userId: testUserId,
+        provider: 'manual',
+        metricType: 'weight',
+        startTime: new Date('2026-08-14T08:00:00Z'),
+        endTime: new Date('2026-08-14T08:05:00Z'),
+        valueNumeric: 77.9,
+        unit: 'kg',
+        dimension: 'default',
+        sourceStream: 'raw',
+        aggregation: 'raw',
+      },
+    ];
+
+    await db.insert(metricEntries).values([...metricAEntries, ...metricBEntries]);
+
+    const overlayResults = await queryBatchEnrichedMetrics({
+      userId: testUserId,
+      metricTypes: ['daily-resting-heart-rate', 'weight'],
+      startTime: new Date('2026-08-01T00:00:00Z'),
+      endTime: new Date('2026-08-15T00:00:00Z'),
+      aggregation: 'daily_avg',
+    });
+
+    expect(overlayResults).toHaveLength(2);
+    const restingHR = overlayResults.find(r => r.metricType === 'daily-resting-heart-rate')!;
+    const weight = overlayResults.find(r => r.metricType === 'weight')!;
+
+    expect(restingHR.entries).toHaveLength(3);
+    expect(weight.entries).toHaveLength(2);
+
+    // Verify chronological order and exact epoch timestamps
+    const tDay1 = new Date('2026-08-01T00:00:00Z').getTime();
+    const tDay2 = new Date('2026-08-02T00:00:00Z').getTime();
+    const tDay3 = new Date('2026-08-03T00:00:00Z').getTime();
+    const tDay7 = new Date('2026-08-07T00:00:00Z').getTime();
+    const tDay14 = new Date('2026-08-14T00:00:00Z').getTime();
+
+    expect(new Date(restingHR.entries[0].startTime).getTime()).toBe(tDay1);
+    expect(new Date(restingHR.entries[1].startTime).getTime()).toBe(tDay2);
+    expect(new Date(restingHR.entries[2].startTime).getTime()).toBe(tDay3);
+
+    expect(new Date(weight.entries[0].startTime).getTime()).toBe(tDay7);
+    expect(new Date(weight.entries[1].startTime).getTime()).toBe(tDay14);
+
+    // Verify time gap proportions:
+    // Gap between Day 3 (end of dense HR) and Day 7 (first weight) is 4 days = 345,600,000 ms
+    // Gap between Day 7 and Day 14 (sparse weight) is 7 days = 604,800,000 ms
+    const gapHRtoWeight = tDay7 - tDay3;
+    const gapWeightSparse = tDay14 - tDay7;
+
+    expect(gapHRtoWeight).toBe(4 * 24 * 60 * 60 * 1000);
+    expect(gapWeightSparse).toBe(7 * 24 * 60 * 60 * 1000);
+    expect(gapWeightSparse / gapHRtoWeight).toBeCloseTo(1.75, 2);
   });
 });

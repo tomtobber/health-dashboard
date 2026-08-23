@@ -504,7 +504,6 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
                     strokeWidth={2.5}
                     dot={{ r: 2 }}
                     activeDot={{ r: 5 }}
-                    connectNulls={true}
                   />
                 ))}
               </LineChart>
