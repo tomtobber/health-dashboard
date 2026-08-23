@@ -7,8 +7,14 @@ export async function ensureDatabaseSchema(): Promise<void> {
   });
 
   try {
+    // 1. Core Schema DDL
     await pool.query(`
       CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version TEXT PRIMARY KEY,
+        executed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+      );
 
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -88,29 +94,6 @@ export async function ensureDatabaseSchema(): Promise<void> {
 
       CREATE INDEX IF NOT EXISTS canonical_query_idx
         ON metric_entries (user_id, metric_type, dimension, start_time, end_time);
-      -- Self-healing backfill for any legacy rows missing parsed value_numeric
-      UPDATE metric_entries
-      SET
-        value_numeric = COALESCE(
-          (raw_payload->'bloodGlucose'->>'bloodGlucoseMilligramsPerDeciliter')::double precision,
-          (raw_payload->'blood-glucose'->>'bloodGlucoseMilligramsPerDeciliter')::double precision,
-          (raw_payload->'bloodGlucose'->>'bloodGlucoseMmolPerLiter')::double precision * 18.0182,
-          (raw_payload->'blood-glucose'->>'bloodGlucoseMmolPerLiter')::double precision * 18.0182,
-          (raw_payload->'bloodGlucose'->>'bloodGlucoseConcentration')::double precision,
-          (raw_payload->'blood-glucose'->>'bloodGlucoseConcentration')::double precision,
-          value_numeric
-        ),
-        unit = COALESCE(unit, 'mg/dL'),
-        dimension = COALESCE(
-          LOWER(raw_payload->'bloodGlucose'->>'measurementSource'),
-          LOWER(raw_payload->'blood-glucose'->>'measurementSource'),
-          dimension
-        )
-      WHERE
-        metric_type IN ('blood-glucose', 'blood_glucose')
-        AND (value_numeric IS NULL OR value_numeric = 0)
-        AND raw_payload IS NOT NULL;
-
 
       CREATE TABLE IF NOT EXISTS sync_runs (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -142,6 +125,33 @@ export async function ensureDatabaseSchema(): Promise<void> {
         ON dashboard_views (user_id, name);
     `);
 
+    // 2. Tracked One-Time Data Migrations (Runs only once across deployments)
+    await runTrackedMigration('20260823_repair_blood_glucose_numeric', async () => {
+      await pool.query(`
+        UPDATE metric_entries
+        SET
+          value_numeric = COALESCE(
+            (raw_payload->'bloodGlucose'->>'bloodGlucoseMilligramsPerDeciliter')::double precision,
+            (raw_payload->'blood-glucose'->>'bloodGlucoseMilligramsPerDeciliter')::double precision,
+            (raw_payload->'bloodGlucose'->>'bloodGlucoseMmolPerLiter')::double precision * 18.0182,
+            (raw_payload->'blood-glucose'->>'bloodGlucoseMmolPerLiter')::double precision * 18.0182,
+            (raw_payload->'bloodGlucose'->>'bloodGlucoseConcentration')::double precision,
+            (raw_payload->'blood-glucose'->>'bloodGlucoseConcentration')::double precision,
+            value_numeric
+          ),
+          unit = COALESCE(unit, 'mg/dL'),
+          dimension = COALESCE(
+            LOWER(raw_payload->'bloodGlucose'->>'measurementSource'),
+            LOWER(raw_payload->'blood-glucose'->>'measurementSource'),
+            dimension
+          )
+        WHERE
+          metric_type IN ('blood-glucose', 'blood_glucose')
+          AND (value_numeric IS NULL OR value_numeric = 0)
+          AND raw_payload IS NOT NULL;
+      `);
+    });
+
     logger.info('Database schema verified and ready.', {
       operation: 'ensureDatabaseSchema',
     });
@@ -151,5 +161,21 @@ export async function ensureDatabaseSchema(): Promise<void> {
       error: err instanceof Error ? err.message : String(err),
     });
     throw err;
+  }
+}
+
+async function runTrackedMigration(version: string, runner: () => Promise<void>): Promise<void> {
+  const check = await pool.query('SELECT version FROM schema_migrations WHERE version = $1', [version]);
+  if (check.rowCount === 0) {
+    logger.info(`Executing tracked migration: ${version}...`, {
+      operation: 'runTrackedMigration',
+      version,
+    });
+    await runner();
+    await pool.query('INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT DO NOTHING', [version]);
+    logger.info(`Tracked migration ${version} completed.`, {
+      operation: 'runTrackedMigration',
+      version,
+    });
   }
 }
