@@ -1,10 +1,10 @@
-import {
-  buildChartTimelineData,
-  computeTimeScaledX,
-} from '../client/src/utils/timeScale';
+import React from 'react';
+import ReactDOMServer from 'react-dom/server';
+import { LineChart, Line, XAxis, YAxis } from 'recharts';
+import { buildChartTimelineData } from '../client/src/utils/timeScale';
 import { EnrichedMetricQueryResult } from '../client/src/types';
 
-describe('MultiMetricPanel Time-Scaled XAxis Coordinate Rendering', () => {
+describe('MultiMetricPanel Recharts Real SVG Rendering & Time-Scaled Coordinates', () => {
   // Mock dataset:
   // Metric A (daily-resting-heart-rate): dense daily points on Day 1, Day 2, Day 3
   // Metric B (weight): sparse weekly points on Day 7 and Day 14
@@ -92,7 +92,6 @@ describe('MultiMetricPanel Time-Scaled XAxis Coordinate Rendering', () => {
     const timeline = buildChartTimelineData(mockDataset, true);
 
     expect(timeline).toHaveLength(5);
-    // Chronological order: Day 1 -> Day 2 -> Day 3 -> Day 7 -> Day 14
     expect(timeline[0].time).toBe('2026-08-01');
     expect(timeline[0]['daily-resting-heart-rate']).toBe(62);
     expect(timeline[0]['weight']).toBeUndefined();
@@ -112,54 +111,85 @@ describe('MultiMetricPanel Time-Scaled XAxis Coordinate Rendering', () => {
     expect(timeline[4]['daily-resting-heart-rate']).toBeUndefined();
   });
 
-  test('Rendered horizontal X-coordinates are strictly proportional to elapsed time (1.75x ratio between 7-day and 4-day gaps)', () => {
+  test('Recharts renders SVG circle elements with real coordinates strictly proportional to elapsed time (1.75x ratio)', () => {
     const timeline = buildChartTimelineData(mockDataset, true);
-    const minTs = timeline[0].timestamp; // Day 1
-    const maxTs = timeline[timeline.length - 1].timestamp; // Day 14
-    const plotWidth = 600; // Simulated 600px chart plot area
-    const leftMargin = 30;
 
-    // Calculate rendered x-coordinate for each data point
-    const xDay1 = computeTimeScaledX(timeline[0].timestamp, minTs, maxTs, plotWidth, leftMargin);
-    const xDay2 = computeTimeScaledX(timeline[1].timestamp, minTs, maxTs, plotWidth, leftMargin);
-    const xDay3 = computeTimeScaledX(timeline[2].timestamp, minTs, maxTs, plotWidth, leftMargin);
-    const xDay7 = computeTimeScaledX(timeline[3].timestamp, minTs, maxTs, plotWidth, leftMargin);
-    const xDay14 = computeTimeScaledX(timeline[4].timestamp, minTs, maxTs, plotWidth, leftMargin);
+    // Render real Recharts LineChart configured identically to MultiMetricPanel.tsx
+    const chartElement = React.createElement(
+      LineChart,
+      {
+        width: 600,
+        height: 400,
+        data: timeline,
+        margin: { top: 10, right: 30, left: 10, bottom: 20 },
+      },
+      React.createElement(XAxis as React.ElementType, {
+        dataKey: 'timestamp',
+        type: 'number',
+        scale: 'time',
+        domain: ['dataMin', 'dataMax'],
+      }),
+      React.createElement(YAxis as React.ElementType, {
+        yAxisId: 'daily-resting-heart-rate',
+        domain: ['auto', 'auto'],
+      }),
+      React.createElement(YAxis as React.ElementType, {
+        yAxisId: 'weight',
+        domain: ['auto', 'auto'],
+        orientation: 'right',
+      }),
+      React.createElement(Line as React.ElementType, {
+        key: 'daily-resting-heart-rate',
+        yAxisId: 'daily-resting-heart-rate',
+        dataKey: 'daily-resting-heart-rate',
+        dot: { r: 2 },
+      }),
+      React.createElement(Line as React.ElementType, {
+        key: 'weight',
+        yAxisId: 'weight',
+        dataKey: 'weight',
+        dot: { r: 2 },
+      })
+    );
 
-    // 1. Strict monotonicity: x coordinates must strictly increase
-    expect(xDay1).toBeLessThan(xDay2);
-    expect(xDay2).toBeLessThan(xDay3);
-    expect(xDay3).toBeLessThan(xDay7);
-    expect(xDay7).toBeLessThan(xDay14);
+    const svgMarkup = ReactDOMServer.renderToStaticMarkup(chartElement);
 
-    // 2. Proportional distance check:
-    // Gap 1: Day 1 to Day 2 (1 day)
-    const dDay1to2 = xDay2 - xDay1;
-    // Gap 2: Day 2 to Day 3 (1 day)
-    const dDay2to3 = xDay3 - xDay2;
-    // Gap 3: Day 3 to Day 7 (4 days)
-    const dDay3to7 = xDay7 - xDay3;
-    // Gap 4: Day 7 to Day 14 (7 days)
-    const dDay7to14 = xDay14 - xDay7;
+    // Extract all rendered circle elements (<circle ... cx="..." cy="..." />)
+    const circleMatches = [...svgMarkup.matchAll(/<circle[^>]*cx="([^"]+)"[^>]*cy="([^"]+)"[^>]*>/g)];
+    const renderedPoints = circleMatches.map((m) => ({
+      cx: parseFloat(m[1]),
+      cy: parseFloat(m[2]),
+    }));
 
-    // Consecutive 1-day gaps must occupy identical pixel widths
+    // Expect exactly 5 rendered dots (3 for heart-rate + 2 for weight)
+    expect(renderedPoints).toHaveLength(5);
+
+    const [pDay1, pDay2, pDay3, pDay7, pDay14] = renderedPoints;
+
+    // 1. Strict Monotonicity: coordinates must strictly increase along X-axis
+    expect(pDay1.cx).toBeLessThan(pDay2.cx);
+    expect(pDay2.cx).toBeLessThan(pDay3.cx);
+    expect(pDay3.cx).toBeLessThan(pDay7.cx);
+    expect(pDay7.cx).toBeLessThan(pDay14.cx);
+
+    // 2. Uniform 1-day spacing in real rendered coordinates
+    const dDay1to2 = pDay2.cx - pDay1.cx;
+    const dDay2to3 = pDay3.cx - pDay2.cx;
     expect(dDay1to2).toBeCloseTo(dDay2to3, 4);
 
-    // 4-day gap must be ~4x the width of a 1-day gap
-    expect(dDay3to7 / dDay1to2).toBeCloseTo(4.0, 3);
+    // 3. Proportional gap spacing in real rendered SVG coordinates
+    const dDay3to7 = pDay7.cx - pDay3.cx;   // 4 days gap
+    const dDay7to14 = pDay14.cx - pDay7.cx; // 7 days gap
 
-    // 7-day gap must be ~7x the width of a 1-day gap
+    expect(dDay3to7 / dDay1to2).toBeCloseTo(4.0, 3);
     expect(dDay7to14 / dDay1to2).toBeCloseTo(7.0, 3);
 
-    // The key test: The horizontal distance between Metric B's points (Day 7 -> 14, 7 days)
-    // must be exactly 1.75x the horizontal distance between Metric A (Day 3) and Metric B (Day 7, 4 days)
+    // 4. The critical ratio test directly on REAL rendered SVG coordinates:
+    // Gap between Metric B's points (Day 7 -> 14) / Gap between Metric A & B (Day 3 -> 7) = 7/4 = 1.75
     const renderedRatio = dDay7to14 / dDay3to7;
-    expect(renderedRatio).toBeCloseTo(1.75, 4); // (7 days / 4 days = 1.75)
+    expect(renderedRatio).toBeCloseTo(1.75, 4);
 
-    // Contrast with the broken categorical/index-based scaling where:
-    // Index(Day 3 -> Day 7) = 3 - 2 = 1 slot
-    // Index(Day 7 -> Day 14) = 4 - 3 = 1 slot
-    // Categorical ratio would have been 1.00 (broken!), whereas time scale is 1.75 (correct!).
+    // Verify it is NOT the broken categorical ratio (1.00)
     expect(renderedRatio).not.toBeCloseTo(1.0, 1);
   });
 });

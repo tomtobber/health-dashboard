@@ -7,6 +7,10 @@ export interface ChartTimelinePoint {
   [metricType: string]: string | number | undefined;
 }
 
+/**
+ * Transforms enriched metric query results into a unified, chronologically sorted
+ * array of timeline points keyed by epoch timestamp.
+ */
 export function buildChartTimelineData(
   numericMetrics: EnrichedMetricQueryResult[],
   isDaily: boolean
@@ -36,20 +40,4 @@ export function buildChartTimelineData(
   }
 
   return Array.from(timeMap.values()).sort((a, b) => a.timestamp - b.timestamp);
-}
-
-/**
- * Calculates the exact rendered horizontal x-coordinate for a given epoch timestamp
- * under Recharts' type="number", scale="time", domain=['dataMin', 'dataMax'] layout.
- */
-export function computeTimeScaledX(
-  timestamp: number,
-  minTimestamp: number,
-  maxTimestamp: number,
-  plotWidth = 500,
-  leftMargin = 10
-): number {
-  if (maxTimestamp <= minTimestamp) return leftMargin;
-  const fraction = (timestamp - minTimestamp) / (maxTimestamp - minTimestamp);
-  return leftMargin + fraction * plotWidth;
 }
