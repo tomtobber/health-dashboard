@@ -160,7 +160,28 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
     for (const metric of numericMetrics) {
       const isSumMetric = metric.metricType === 'steps' || metric.metricType === 'sleep' || metric.metricType === 'water-intake';
 
-      for (const entry of metric.entries) {
+      let validEntries = metric.entries;
+
+      if (metric.metricType === 'sleep') {
+        const hasSummary = metric.entries.some((e) => e.dimension === 'summary' || e.dimension === 'default');
+        validEntries = hasSummary
+          ? metric.entries.filter((e) => e.dimension === 'summary' || e.dimension === 'default')
+          : metric.entries.filter((e) => e.dimension !== 'wake' && e.dimension !== 'awake');
+      } else if (metric.metricType === 'daily-oxygen-saturation') {
+        const hasAvg = metric.entries.some((e) => e.dimension === 'average' || e.dimension === 'default');
+        if (hasAvg) validEntries = metric.entries.filter((e) => e.dimension === 'average' || e.dimension === 'default');
+      } else if (metric.metricType === 'respiratory-rate-sleep-summary') {
+        const hasFull = metric.entries.some((e) => e.dimension === 'full_sleep' || e.dimension === 'default');
+        if (hasFull) validEntries = metric.entries.filter((e) => e.dimension === 'full_sleep' || e.dimension === 'default');
+      } else if (metric.metricType === 'daily-sleep-temperature-derivations') {
+        const hasNightly = metric.entries.some((e) => e.dimension === 'nightly' || e.dimension === 'default');
+        if (hasNightly) validEntries = metric.entries.filter((e) => e.dimension === 'nightly' || e.dimension === 'default');
+      } else if (metric.metricType === 'daily-heart-rate-variability') {
+        const hasAvg = metric.entries.some((e) => e.dimension === 'daily_average' || e.dimension === 'default');
+        if (hasAvg) validEntries = metric.entries.filter((e) => e.dimension === 'daily_average' || e.dimension === 'default');
+      }
+
+      for (const entry of validEntries) {
         if (entry.valueNumeric === undefined || entry.valueNumeric === null) continue;
         
         const rawDate = typeof entry.startTime === 'string' ? parseISO(entry.startTime) : new Date(entry.startTime);
