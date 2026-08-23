@@ -1,3 +1,4 @@
+import { buildChartTimelineData } from '../utils/timeScale';
 
 export function formatDurationValue(value: number, unit: string | null): string {
   if (unit === 'minutes') {
@@ -41,6 +42,7 @@ import {
   } from 'recharts';
 import { format, parseISO, subDays, subHours, subYears } from 'date-fns';
 import { Settings, Trash2, AlertCircle, RefreshCw, TrendingUp } from 'lucide-react';
+
 
 interface MultiMetricPanelProps {
   panel: DashboardPanelConfig;
@@ -153,81 +155,10 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
   const booleanMetrics = useMemo(() => safeData.filter((d) => d && d.valueType === 'boolean'), [safeData]);
   const categoryMetrics = useMemo(() => safeData.filter((d) => d && d.valueType === 'category'), [safeData]);
 
-  // Merge timelines into unified array of time buckets for Recharts (with smart daily aggregation)
   const chartData = useMemo(() => {
     const isDaily = panel.aggregation === 'daily_avg' || (panel.timeRange.type === 'relative' && panel.timeRange.value !== 'last_24h');
-    const timeMap = new Map<string, { time: string; timestamp: number; _counts: Record<string, number>; [key: string]: any }>();
-
-    for (const metric of numericMetrics) {
-      const isSumMetric = metric.metricType === 'steps' || metric.metricType === 'sleep' || metric.metricType === 'water-intake';
-
-      let validEntries = metric.entries;
-
-      if (metric.metricType === 'sleep') {
-        const hasSummary = metric.entries.some((e) => e.dimension === 'summary' || e.dimension === 'default');
-        validEntries = hasSummary
-          ? metric.entries.filter((e) => e.dimension === 'summary' || e.dimension === 'default')
-          : metric.entries.filter((e) => e.dimension !== 'wake' && e.dimension !== 'awake');
-      } else if (metric.metricType === 'daily-oxygen-saturation') {
-        const hasAvg = metric.entries.some((e) => e.dimension === 'average' || e.dimension === 'default');
-        if (hasAvg) validEntries = metric.entries.filter((e) => e.dimension === 'average' || e.dimension === 'default');
-      } else if (metric.metricType === 'respiratory-rate-sleep-summary') {
-        const hasFull = metric.entries.some((e) => e.dimension === 'full_sleep' || e.dimension === 'default');
-        if (hasFull) validEntries = metric.entries.filter((e) => e.dimension === 'full_sleep' || e.dimension === 'default');
-      } else if (metric.metricType === 'daily-sleep-temperature-derivations') {
-        const hasNightly = metric.entries.some((e) => e.dimension === 'nightly' || e.dimension === 'default');
-        if (hasNightly) validEntries = metric.entries.filter((e) => e.dimension === 'nightly' || e.dimension === 'default');
-      } else if (metric.metricType === 'daily-heart-rate-variability') {
-        const hasAvg = metric.entries.some((e) => e.dimension === 'daily_average' || e.dimension === 'default');
-        if (hasAvg) validEntries = metric.entries.filter((e) => e.dimension === 'daily_average' || e.dimension === 'default');
-      }
-
-      for (const entry of validEntries) {
-        if (entry.valueNumeric === undefined || entry.valueNumeric === null) continue;
-        
-        const rawDate = typeof entry.startTime === 'string' ? parseISO(entry.startTime) : new Date(entry.startTime);
-        if (isNaN(rawDate.getTime())) continue;
-
-        let timeKey: string;
-        let ts: number;
-
-        if (isDaily) {
-          timeKey = format(rawDate, 'yyyy-MM-dd');
-          ts = new Date(`${timeKey}T12:00:00.000Z`).getTime();
-        } else {
-          timeKey = rawDate.toISOString();
-          ts = rawDate.getTime();
-        }
-
-        if (!timeMap.has(timeKey)) {
-          timeMap.set(timeKey, {
-            time: timeKey,
-            timestamp: ts,
-            _counts: {},
-          });
-        }
-
-        const point = timeMap.get(timeKey)!;
-        const currentVal = point[metric.metricType];
-        const currentCount = point._counts[metric.metricType] || 0;
-
-        if (isDaily) {
-          if (isSumMetric) {
-            point[metric.metricType] = (currentVal || 0) + entry.valueNumeric;
-          } else {
-            const newTotal = (currentVal || 0) * currentCount + entry.valueNumeric;
-            point._counts[metric.metricType] = currentCount + 1;
-            point[metric.metricType] = Math.round((newTotal / (currentCount + 1)) * 10) / 10;
-          }
-        } else {
-          point[metric.metricType] = entry.valueNumeric;
-        }
-      }
-    }
-
-    const sorted = Array.from(timeMap.values()).sort((a, b) => a.timestamp - b.timestamp);
-    return sorted;
-  }, [numericMetrics, panel.aggregation]);
+    return buildChartTimelineData(numericMetrics, isDaily);
+  }, [numericMetrics, panel.aggregation, panel.timeRange]);
 
   // Collect discrete events for boolean / category overlays
   const discreteEvents = useMemo(() => {
