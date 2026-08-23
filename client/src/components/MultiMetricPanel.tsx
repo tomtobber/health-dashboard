@@ -1,4 +1,16 @@
 
+export function formatDurationValue(value: number, unit: string | null): string {
+  if (unit === 'minutes') {
+    const h = Math.floor(value / 60);
+    const m = Math.round(value % 60);
+    if (h === 0) return `${m}m`;
+    if (m === 0) return `${h}h`;
+    return `${h}h ${m}m`;
+  }
+  return unit ? `${value} ${unit}` : `${value}`;
+}
+
+
 function formatTimestampSafely(val?: string | null, fmt = 'PPP p'): string {
   if (!val) return '';
   try {
@@ -127,6 +139,15 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
 
   // Separate metrics by valueType
   const safeData = useMemo(() => Array.isArray(data) ? data : [], [data]);
+  const metricMap = useMemo(() => {
+    const map = new Map<string, EnrichedMetricQueryResult>();
+    for (const m of safeData) {
+      if (m && m.metricType) {
+        map.set(m.metricType, m);
+      }
+    }
+    return map;
+  }, [safeData]);
   const numericMetrics = useMemo(() => safeData.filter((d) => d && (d.valueType === 'numeric' || d.valueType === 'duration')), [safeData]);
   const booleanMetrics = useMemo(() => safeData.filter((d) => d && d.valueType === 'boolean'), [safeData]);
   const categoryMetrics = useMemo(() => safeData.filter((d) => d && d.valueType === 'category'), [safeData]);
@@ -348,7 +369,7 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
                     orientation={idx % 2 === 0 ? 'left' : 'right'}
                     stroke={SERIES_COLORS[idx % SERIES_COLORS.length]}
                     fontSize={11}
-                    tickFormatter={(v) => `${v} ${m.unit || ''}`}
+                    tickFormatter={(v) => formatDurationValue(v, m.unit)}
                   />
                 ))}
                 <Tooltip
@@ -359,11 +380,17 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
                           <p style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '4px' }}>
                             {formatTimestampSafely(label)}
                           </p>
-                          {payload.map((entry: any, i: number) => (
-                            <p key={i} style={{ fontSize: '0.8125rem', color: entry.color, fontWeight: 600 }}>
-                              {entry.name}: {entry.value}
-                            </p>
-                          ))}
+                          {payload.map((entry: any, i: number) => {
+                            const metric = metricMap.get(entry.dataKey);
+                            const formattedVal = typeof entry.value === 'number'
+                              ? formatDurationValue(entry.value, metric?.unit || null)
+                              : `${entry.value}`;
+                            return (
+                              <p key={i} style={{ fontSize: '0.8125rem', color: entry.color, fontWeight: 600 }}>
+                                {entry.name}: {formattedVal}
+                              </p>
+                            );
+                          })}
                         </div>
                       );
                     }
@@ -405,7 +432,7 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
                     orientation={idx % 2 === 0 ? 'left' : 'right'}
                     stroke={SERIES_COLORS[idx % SERIES_COLORS.length]}
                     fontSize={11}
-                    tickFormatter={(v) => `${v} ${m.unit || ''}`}
+                    tickFormatter={(v) => formatDurationValue(v, m.unit)}
                   />
                 ))}
                 <Tooltip
@@ -416,11 +443,17 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
                           <p style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '4px' }}>
                             {formatTimestampSafely(label)}
                           </p>
-                          {payload.map((entry: any, i: number) => (
-                            <p key={i} style={{ fontSize: '0.8125rem', color: entry.color, fontWeight: 600 }}>
-                              {entry.name}: {entry.value}
-                            </p>
-                          ))}
+                          {payload.map((entry: any, i: number) => {
+                            const metric = metricMap.get(entry.dataKey);
+                            const formattedVal = typeof entry.value === 'number'
+                              ? formatDurationValue(entry.value, metric?.unit || null)
+                              : `${entry.value}`;
+                            return (
+                              <p key={i} style={{ fontSize: '0.8125rem', color: entry.color, fontWeight: 600 }}>
+                                {entry.name}: {formattedVal}
+                              </p>
+                            );
+                          })}
                         </div>
                       );
                     }
