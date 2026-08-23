@@ -75,28 +75,48 @@ export interface CanonicalMetricMetadata {
 }
 
 export const CANONICAL_PROVIDER_METRICS: Record<string, CanonicalMetricMetadata> = {
-  'steps': { displayName: 'Steps', valueType: 'numeric', unit: 'count' },
+  // Cardio & Heart
   'heart-rate': { displayName: 'Heart Rate', valueType: 'numeric', unit: 'bpm' },
   'heart_rate': { displayName: 'Heart Rate', valueType: 'numeric', unit: 'bpm' },
-  'sleep': { displayName: 'Sleep', valueType: 'duration', unit: 'seconds' },
-  'active-zone-minutes': { displayName: 'Active Zone Minutes', valueType: 'numeric', unit: 'minutes' },
+  'daily-resting-heart-rate': { displayName: 'Resting Heart Rate', valueType: 'numeric', unit: 'bpm' },
+  'daily-heart-rate-variability': { displayName: 'HRV (RMSSD)', valueType: 'numeric', unit: 'ms' },
+  'heart-rate-variability': { displayName: 'Heart Rate Variability', valueType: 'numeric', unit: 'ms' },
+  'daily-heart-rate-zones': { displayName: 'Daily HR Zones', valueType: 'numeric', unit: 'minutes' },
+  'time-in-heart-rate-zone': { displayName: 'Time in HR Zone', valueType: 'numeric', unit: 'minutes' },
+
+  // Activity & Movement
+  'steps': { displayName: 'Steps', valueType: 'numeric', unit: 'count' },
   'distance': { displayName: 'Distance', valueType: 'numeric', unit: 'meters' },
-  'weight': { displayName: 'Weight', valueType: 'numeric', unit: 'kg' },
-  'blood-pressure': { displayName: 'Blood Pressure', valueType: 'numeric', unit: 'mmHg' },
-  'blood-glucose': { displayName: 'Blood Glucose', valueType: 'numeric', unit: 'mg/dL' },
-  'hydration-log': { displayName: 'Hydration', valueType: 'numeric', unit: 'ml' },
-  'nutrition-log': { displayName: 'Nutrition', valueType: 'numeric', unit: 'kcal' },
-  'total-calories': { displayName: 'Total Calories', valueType: 'numeric', unit: 'kcal' },
-  'body-fat': { displayName: 'Body Fat Percentage', valueType: 'numeric', unit: '%' },
+  'active-zone-minutes': { displayName: 'Active Zone Minutes', valueType: 'duration', unit: 'minutes' },
+  'exercise': { displayName: 'Exercise', valueType: 'duration', unit: 'minutes' },
+  'sedentary-period': { displayName: 'Sedentary Period', valueType: 'duration', unit: 'minutes' },
   'activity-level': {
     displayName: 'Activity Level',
     valueType: 'category',
     unit: null,
     categoryValues: ['sedentary', 'lightly-active', 'moderately-active', 'very-active'],
   },
-  'exercise': { displayName: 'Exercise', valueType: 'duration', unit: 'seconds' },
-  'height': { displayName: 'Height', valueType: 'numeric', unit: 'cm' },
   'run-vo2-max': { displayName: 'VO2 Max', valueType: 'numeric', unit: 'mL/kg/min' },
+  'altitude': { displayName: 'Altitude', valueType: 'numeric', unit: 'meters' },
+
+  // Sleep & Recovery
+  'sleep': { displayName: 'Sleep Duration', valueType: 'duration', unit: 'minutes' },
+  'daily-oxygen-saturation': { displayName: 'SpO2 Oxygen Saturation', valueType: 'numeric', unit: '%' },
+  'daily-respiratory-rate': { displayName: 'Respiratory Rate', valueType: 'numeric', unit: 'breaths/min' },
+  'respiratory-rate-sleep-summary': { displayName: 'Sleep Respiratory Rate', valueType: 'numeric', unit: 'breaths/min' },
+  'daily-sleep-temperature-derivations': { displayName: 'Sleep Skin Temperature', valueType: 'numeric', unit: '°C' },
+
+  // Body & Vitals
+  'weight': { displayName: 'Weight', valueType: 'numeric', unit: 'kg' },
+  'body-fat': { displayName: 'Body Fat Percentage', valueType: 'numeric', unit: '%' },
+  'height': { displayName: 'Height', valueType: 'numeric', unit: 'cm' },
+  'blood-pressure': { displayName: 'Blood Pressure', valueType: 'numeric', unit: 'mmHg' },
+  'blood-glucose': { displayName: 'Blood Glucose', valueType: 'numeric', unit: 'mg/dL' },
+
+  // Nutrition & Hydration
+  'hydration-log': { displayName: 'Hydration', valueType: 'numeric', unit: 'ml' },
+  'nutrition-log': { displayName: 'Nutrition', valueType: 'numeric', unit: 'kcal' },
+  'total-calories': { displayName: 'Total Calories', valueType: 'numeric', unit: 'kcal' },
 };
 
 export function getCanonicalProviderMetricMetadata(metricType: string): CanonicalMetricMetadata {

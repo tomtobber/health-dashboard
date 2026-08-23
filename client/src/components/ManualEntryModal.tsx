@@ -15,6 +15,7 @@ export const ManualEntryModal: React.FC<ManualEntryModalProps> = ({
   onClose,
 }) => {
   const activeDefs = (Array.isArray(definitions) ? definitions : []).filter((d) => d && d.archivedAt === null);
+  
 
   const [selectedMetricType, setSelectedMetricType] = useState<string>(
     activeDefs[0] ? activeDefs[0].metricType : ''

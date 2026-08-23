@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { DashboardPanelConfig, MetricDefinition, TimeRange } from '../types';
-import { X, Check } from 'lucide-react';
+import { X, Check, Search } from 'lucide-react';
 
 interface PanelConfigModalProps {
   panel: DashboardPanelConfig | null;
@@ -9,17 +9,52 @@ interface PanelConfigModalProps {
   onClose: () => void;
 }
 
-const CANONICAL_OPTIONS = [
-  { metricType: 'heart-rate', displayName: 'Heart Rate', unit: 'bpm', type: 'numeric' },
-  { metricType: 'steps', displayName: 'Steps', unit: 'count', type: 'numeric' },
-  { metricType: 'sleep', displayName: 'Sleep Duration', unit: 'minutes', type: 'duration' },
-  { metricType: 'daily-resting-heart-rate', displayName: 'Resting Heart Rate', unit: 'bpm', type: 'numeric' },
-  { metricType: 'daily-heart-rate-variability', displayName: 'HRV (RMSSD)', unit: 'ms', type: 'numeric' },
-  { metricType: 'active-zone-minutes', displayName: 'Active Zone Minutes', unit: 'minutes', type: 'duration' },
-  { metricType: 'run-vo2-max', displayName: 'VO2 Max', unit: 'ml/kg/min', type: 'numeric' },
-  { metricType: 'daily-oxygen-saturation', displayName: 'SpO2 Oxygen Saturation', unit: '%', type: 'numeric' },
-  { metricType: 'weight', displayName: 'Weight', unit: 'kg', type: 'numeric' },
-  { metricType: 'hydration-log', displayName: 'Hydration Log', unit: 'ml', type: 'numeric' },
+export interface MetricCatalogItem {
+  metricType: string;
+  displayName: string;
+  unit: string | null;
+  type: 'numeric' | 'duration' | 'boolean' | 'category';
+  category: 'Cardio' | 'Activity' | 'Sleep & Recovery' | 'Vitals & Body' | 'Nutrition' | 'Custom';
+  isCustom?: boolean;
+}
+
+export const ALL_CANONICAL_METRICS: MetricCatalogItem[] = [
+  // Cardio
+  { metricType: 'heart-rate', displayName: 'Heart Rate', unit: 'bpm', type: 'numeric', category: 'Cardio' },
+  { metricType: 'daily-resting-heart-rate', displayName: 'Resting Heart Rate', unit: 'bpm', type: 'numeric', category: 'Cardio' },
+  { metricType: 'daily-heart-rate-variability', displayName: 'HRV (RMSSD)', unit: 'ms', type: 'numeric', category: 'Cardio' },
+  { metricType: 'heart-rate-variability', displayName: 'HRV Intraday', unit: 'ms', type: 'numeric', category: 'Cardio' },
+  { metricType: 'daily-heart-rate-zones', displayName: 'Daily HR Zones', unit: 'minutes', type: 'numeric', category: 'Cardio' },
+  { metricType: 'time-in-heart-rate-zone', displayName: 'Time in HR Zone', unit: 'minutes', type: 'numeric', category: 'Cardio' },
+
+  // Activity
+  { metricType: 'steps', displayName: 'Steps', unit: 'count', type: 'numeric', category: 'Activity' },
+  { metricType: 'distance', displayName: 'Distance', unit: 'meters', type: 'numeric', category: 'Activity' },
+  { metricType: 'active-zone-minutes', displayName: 'Active Zone Minutes', unit: 'minutes', type: 'duration', category: 'Activity' },
+  { metricType: 'exercise', displayName: 'Exercise Sessions', unit: 'minutes', type: 'duration', category: 'Activity' },
+  { metricType: 'run-vo2-max', displayName: 'VO2 Max', unit: 'mL/kg/min', type: 'numeric', category: 'Activity' },
+  { metricType: 'activity-level', displayName: 'Activity Level', unit: null, type: 'category', category: 'Activity' },
+  { metricType: 'sedentary-period', displayName: 'Sedentary Period', unit: 'minutes', type: 'duration', category: 'Activity' },
+  { metricType: 'altitude', displayName: 'Altitude', unit: 'meters', type: 'numeric', category: 'Activity' },
+
+  // Sleep & Recovery
+  { metricType: 'sleep', displayName: 'Sleep Duration', unit: 'minutes', type: 'duration', category: 'Sleep & Recovery' },
+  { metricType: 'daily-oxygen-saturation', displayName: 'SpO2 Oxygen Saturation', unit: '%', type: 'numeric', category: 'Sleep & Recovery' },
+  { metricType: 'daily-respiratory-rate', displayName: 'Respiratory Rate', unit: 'breaths/min', type: 'numeric', category: 'Sleep & Recovery' },
+  { metricType: 'respiratory-rate-sleep-summary', displayName: 'Sleep Respiratory Summary', unit: 'breaths/min', type: 'numeric', category: 'Sleep & Recovery' },
+  { metricType: 'daily-sleep-temperature-derivations', displayName: 'Sleep Skin Temperature', unit: '°C', type: 'numeric', category: 'Sleep & Recovery' },
+
+  // Vitals & Body
+  { metricType: 'weight', displayName: 'Weight', unit: 'kg', type: 'numeric', category: 'Vitals & Body' },
+  { metricType: 'body-fat', displayName: 'Body Fat %', unit: '%', type: 'numeric', category: 'Vitals & Body' },
+  { metricType: 'height', displayName: 'Height', unit: 'cm', type: 'numeric', category: 'Vitals & Body' },
+  { metricType: 'blood-glucose', displayName: 'Blood Glucose', unit: 'mg/dL', type: 'numeric', category: 'Vitals & Body' },
+  { metricType: 'blood-pressure', displayName: 'Blood Pressure', unit: 'mmHg', type: 'numeric', category: 'Vitals & Body' },
+
+  // Nutrition & Hydration
+  { metricType: 'hydration-log', displayName: 'Hydration', unit: 'ml', type: 'numeric', category: 'Nutrition' },
+  { metricType: 'nutrition-log', displayName: 'Nutrition', unit: 'kcal', type: 'numeric', category: 'Nutrition' },
+  { metricType: 'total-calories', displayName: 'Total Calories', unit: 'kcal', type: 'numeric', category: 'Nutrition' },
 ];
 
 export const PanelConfigModal: React.FC<PanelConfigModalProps> = ({
@@ -29,6 +64,8 @@ export const PanelConfigModal: React.FC<PanelConfigModalProps> = ({
   onClose,
 }) => {
   const [selectedMetrics, setSelectedMetrics] = useState<string[]>(panel ? panel.metricTypes : ['heart-rate']);
+  const [activeCategory, setActiveCategory] = useState<string>('All');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [rangeType, setRangeType] = useState<'relative' | 'absolute'>(panel ? panel.timeRange.type : 'relative');
   const [relativeValue, setRelativeValue] = useState<'last_24h' | 'last_7d' | 'last_30d' | 'last_90d' | 'last_1y'>(
     panel && panel.timeRange.type === 'relative' ? panel.timeRange.value : 'last_7d'
@@ -78,37 +115,94 @@ export const PanelConfigModal: React.FC<PanelConfigModalProps> = ({
     });
   };
 
-  // Combine custom metric definitions with canonical list
-  const allMetricOptions = [
-    ...definitions.map((d) => ({
+  // Combine custom metric definitions with full canonical list
+  const fullCatalog = useMemo<MetricCatalogItem[]>(() => {
+    const customItems: MetricCatalogItem[] = (Array.isArray(definitions) ? definitions : []).map((d) => ({
       metricType: d.metricType,
       displayName: d.displayName,
-      unit: d.unit,
+      unit: d.unit || null,
       type: d.valueType,
+      category: 'Custom',
       isCustom: true,
-      isArchived: d.archivedAt !== null,
-    })),
-    ...CANONICAL_OPTIONS.filter((c) => !definitions.some((d) => d.metricType === c.metricType)),
-  ];
+    }));
+
+    const canonicalFiltered = ALL_CANONICAL_METRICS.filter(
+      (c) => !customItems.some((d) => d.metricType === c.metricType)
+    );
+
+    return [...customItems, ...canonicalFiltered];
+  }, [definitions]);
+
+  const categories = ['All', 'Cardio', 'Activity', 'Sleep & Recovery', 'Vitals & Body', 'Nutrition', 'Custom'];
+
+  const filteredCatalog = useMemo(() => {
+    return fullCatalog.filter((item) => {
+      const matchesCategory = activeCategory === 'All' || item.category === activeCategory;
+      const matchesSearch =
+        searchQuery === '' ||
+        item.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        item.metricType.toLowerCase().includes(searchQuery.toLowerCase());
+      return matchesCategory && matchesSearch;
+    });
+  }, [fullCatalog, activeCategory, searchQuery]);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '580px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-          <h2>{panel ? 'Configure Panel' : 'Add Multi-Metric Panel'}</h2>
+      <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '640px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+          <h2>{panel ? 'Configure Multi-Metric Panel' : 'Add Multi-Metric Panel'}</h2>
           <button className="btn btn-secondary btn-icon" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
 
         <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          {/* Multi-Metric Selection */}
+          {/* Multi-Metric Selection Catalog */}
           <div>
-            <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.5rem' }}>
-              Select Metrics to Overlay (Pick 1 or more):
-            </label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', maxHeight: '160px', overflowY: 'auto', padding: '0.5rem', background: 'rgba(15,23,42,0.6)', borderRadius: '10px', border: '1px solid var(--border-subtle)' }}>
-              {allMetricOptions.map((opt) => {
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+              <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                Select Metrics ({selectedMetrics.length} selected):
+              </label>
+              <div style={{ position: 'relative', width: '180px' }}>
+                <Search size={13} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                <input
+                  type="text"
+                  placeholder="Search metrics..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="input-field"
+                  style={{ paddingLeft: '26px', fontSize: '0.75rem', paddingBlock: '0.25rem' }}
+                />
+              </div>
+            </div>
+
+            {/* Category tabs */}
+            <div style={{ display: 'flex', gap: '0.25rem', overflowX: 'auto', paddingBottom: '0.375rem', marginBottom: '0.5rem' }}>
+              {categories.map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setActiveCategory(cat)}
+                  style={{
+                    fontSize: '0.6875rem',
+                    padding: '0.2rem 0.5rem',
+                    borderRadius: '6px',
+                    border: '1px solid',
+                    borderColor: activeCategory === cat ? 'var(--accent-primary)' : 'var(--border-subtle)',
+                    background: activeCategory === cat ? 'rgba(59,130,246,0.15)' : 'transparent',
+                    color: activeCategory === cat ? 'var(--accent-primary)' : 'var(--text-muted)',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+
+            {/* Metric pill list */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem', maxHeight: '180px', overflowY: 'auto', padding: '0.5rem', background: 'rgba(15,23,42,0.6)', borderRadius: '10px', border: '1px solid var(--border-subtle)' }}>
+              {filteredCatalog.map((opt) => {
                 const isSelected = selectedMetrics.includes(opt.metricType);
                 return (
                   <button
@@ -116,13 +210,18 @@ export const PanelConfigModal: React.FC<PanelConfigModalProps> = ({
                     type="button"
                     onClick={() => toggleMetric(opt.metricType)}
                     className={`btn ${isSelected ? 'btn-primary' : 'btn-secondary'}`}
-                    style={{ fontSize: '0.75rem', padding: '0.35rem 0.65rem' }}
+                    style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', display: 'flex', alignItems: 'center', gap: '4px' }}
                   >
                     {isSelected && <Check size={12} />}
-                    {opt.displayName} {opt.unit ? `(${opt.unit})` : ''}
+                    <span>{opt.displayName}</span>
+                    {opt.unit && <span style={{ opacity: 0.6, fontSize: '0.6875rem' }}>({opt.unit})</span>}
+                    {opt.isCustom && <span style={{ fontSize: '0.625rem', background: 'rgba(168,85,247,0.2)', color: '#c084fc', padding: '1px 4px', borderRadius: '4px' }}>Custom</span>}
                   </button>
                 );
               })}
+              {filteredCatalog.length === 0 && (
+                <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', padding: '0.5rem' }}>No metrics match your search.</span>
+              )}
             </div>
           </div>
 
@@ -137,8 +236,8 @@ export const PanelConfigModal: React.FC<PanelConfigModalProps> = ({
                 value={rangeType}
                 onChange={(e) => setRangeType(e.target.value as 'relative' | 'absolute')}
               >
-                <option value="relative">Relative (Up to Now)</option>
-                <option value="absolute">Absolute (Fixed Date Range)</option>
+                <option value="relative">Relative Window</option>
+                <option value="absolute">Custom Date Range</option>
               </select>
             </div>
 
@@ -187,21 +286,21 @@ export const PanelConfigModal: React.FC<PanelConfigModalProps> = ({
             )}
           </div>
 
-          {/* Aggregation & Chart Type */}
+          {/* Resolution & Chart Type */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
             <div>
               <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.375rem' }}>
-                Resolution / Aggregation
+                Resolution / Downsampling
               </label>
               <select
                 className="input-field"
                 value={aggregation}
                 onChange={(e) => setAggregation(e.target.value as any)}
               >
-                <option value="daily_avg">Daily Average</option>
-                <option value="5m_avg">5-Minute Average</option>
-                <option value="1m_avg">1-Minute Average</option>
-                <option value="raw">Raw Resolution</option>
+                <option value="daily_avg">Daily Resolution (Recommended)</option>
+                <option value="5m_avg">5-Minute Intervals</option>
+                <option value="1m_avg">1-Minute Intervals</option>
+                <option value="raw">Raw / Exact Timestamps</option>
               </select>
             </div>
 
@@ -214,7 +313,7 @@ export const PanelConfigModal: React.FC<PanelConfigModalProps> = ({
                 value={chartType}
                 onChange={(e) => setChartType(e.target.value as 'line' | 'bar')}
               >
-                <option value="line">Multi-Series Line</option>
+                <option value="line">Multi-Series Line (with Multi-Y-Axes)</option>
                 <option value="bar">Bar Chart</option>
               </select>
             </div>
