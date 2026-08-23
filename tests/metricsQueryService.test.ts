@@ -13,6 +13,53 @@ describe('Metrics Canonical Query Path & SQL Daily Aggregation', () => {
   let testUserId: string;
 
   beforeAll(async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        email VARCHAR(255) NOT NULL UNIQUE,
+        password_hash VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS metric_entries (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider VARCHAR(64) NOT NULL,
+        metric_type VARCHAR(64) NOT NULL,
+        start_time TIMESTAMP WITH TIME ZONE NOT NULL,
+        end_time TIMESTAMP WITH TIME ZONE NOT NULL,
+        value_numeric DOUBLE PRECISION,
+        value_text TEXT,
+        value_min DOUBLE PRECISION,
+        value_max DOUBLE PRECISION,
+        unit VARCHAR(32),
+        dimension TEXT NOT NULL DEFAULT 'default',
+        aggregation TEXT NOT NULL DEFAULT 'raw',
+        source_stream VARCHAR(32),
+        raw_payload JSONB,
+        deleted_at TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS metric_definitions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        metric_type TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        value_type TEXT NOT NULL,
+        unit TEXT,
+        category_values JSONB,
+        archived_at TIMESTAMP WITH TIME ZONE,
+        created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS metric_definitions_user_metric_idx 
+        ON metric_definitions (user_id, metric_type);
+    `).catch(() => {});
+
     await pool.query('DELETE FROM users WHERE email = $1', ['query_service_tester@example.com']).catch(() => {});
 
     const [user] = await db
