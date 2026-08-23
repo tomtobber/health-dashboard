@@ -937,10 +937,36 @@ export class GoogleHealthAdapter implements ProviderAdapter {
     }
 
     // 11. BLOOD GLUCOSE
-    if (metricType === 'blood-glucose') {
-      const src = typeof nested?.measurementSource === 'string' ? nested.measurementSource.toLowerCase() : 'default';
-      const val = Number(nested?.bloodGlucoseConcentration ?? nested?.concentration ?? 0);
-      return [createEntry(src, val, 'mg/dL')];
+    if (metricType === 'blood-glucose' || metricType === 'blood_glucose') {
+      const bgObj = (nested || rawPoint.bloodGlucose || rawPoint['blood-glucose'] || rawPoint) as Record<string, unknown>;
+      const src = typeof bgObj?.measurementSource === 'string' ? String(bgObj.measurementSource).toLowerCase() : 'default';
+
+      let val: number | undefined = undefined;
+      let unit = 'mg/dL';
+
+      if (typeof bgObj?.bloodGlucoseMilligramsPerDeciliter === 'number' && !isNaN(bgObj.bloodGlucoseMilligramsPerDeciliter)) {
+        val = bgObj.bloodGlucoseMilligramsPerDeciliter;
+        unit = 'mg/dL';
+      } else if (typeof bgObj?.bloodGlucoseMilligramsPerDeciliter === 'string' && !isNaN(Number(bgObj.bloodGlucoseMilligramsPerDeciliter))) {
+        val = Number(bgObj.bloodGlucoseMilligramsPerDeciliter);
+        unit = 'mg/dL';
+      } else if (typeof bgObj?.bloodGlucoseMmolPerLiter === 'number' && !isNaN(bgObj.bloodGlucoseMmolPerLiter)) {
+        val = bgObj.bloodGlucoseMmolPerLiter * 18.0182;
+        unit = 'mg/dL';
+      } else if (typeof bgObj?.bloodGlucoseMmolPerLiter === 'string' && !isNaN(Number(bgObj.bloodGlucoseMmolPerLiter))) {
+        val = Number(bgObj.bloodGlucoseMmolPerLiter) * 18.0182;
+        unit = 'mg/dL';
+      } else if (typeof bgObj?.bloodGlucoseConcentration === 'number' && !isNaN(bgObj.bloodGlucoseConcentration)) {
+        val = bgObj.bloodGlucoseConcentration;
+      } else if (typeof bgObj?.concentration === 'number' && !isNaN(bgObj.concentration)) {
+        val = bgObj.concentration;
+      } else if (typeof bgObj?.value === 'number' && !isNaN(bgObj.value)) {
+        val = bgObj.value;
+      } else if (typeof bgObj?.valueNumeric === 'number' && !isNaN(bgObj.valueNumeric)) {
+        val = bgObj.valueNumeric;
+      }
+
+      return [createEntry(src, val, unit)];
     }
 
     // 12. BLOOD PRESSURE (Split into separate Systolic and Diastolic dimension entries)

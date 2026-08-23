@@ -261,4 +261,37 @@ describe('GoogleHealthAdapter Sync & Range Splitting', () => {
     expect(res.mappedEntries).toBeDefined();
     expect(res.mappedEntries!.length).toBeGreaterThan(0);
   });
+  test('maps real-world blood-glucose DataPoint with bloodGlucoseMilligramsPerDeciliter', () => {
+    const adapter = new GoogleHealthAdapter();
+    const rawPoint = {
+      name: 'users/1291695626573082229/dataTypes/blood-glucose/dataPoints/1743882559054447128',
+      userId: '8b7ce4a6-8c06-4c8f-801b-fb52144601ad',
+      dataSource: {
+        platform: 'FITBIT',
+        recordingMethod: 'MANUAL',
+      },
+      metricType: 'blood-glucose',
+      bloodGlucose: {
+        sampleTime: {
+          civilTime: {
+            date: { day: 28, year: 2026, month: 5 },
+            time: { hours: 8, nanos: 652000000, minutes: 13, seconds: 8 },
+          },
+          utcOffset: '7200s',
+          physicalTime: '2026-05-28T06:13:08.652Z',
+        },
+        measurementSource: 'SELF_MONITORING_BLOOD_GLUCOSE',
+        bloodGlucoseMilligramsPerDeciliter: 95.48268,
+      },
+    };
+
+    const mapped = adapter.mapToNormalizedSchema(rawPoint);
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0].metricType).toBe('blood-glucose');
+    expect(mapped[0].valueNumeric).toBe(95.48268);
+    expect(mapped[0].unit).toBe('mg/dL');
+    expect(mapped[0].dimension).toBe('self_monitoring_blood_glucose');
+    expect(mapped[0].startTime.toISOString()).toBe('2026-05-28T06:13:08.652Z');
+  });
+
 });
