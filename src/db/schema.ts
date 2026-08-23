@@ -64,6 +64,8 @@ export const metricEntries = pgTable('metric_entries', {
     .on(table.userId, table.provider, table.metricType, table.sourceStream, table.dimension, table.startTime, table.endTime)
     .where(sql`source_stream = 'reconciled' OR external_id IS NULL`),
   canonicalQueryIdx: index('canonical_query_idx').on(table.userId, table.metricType, table.dimension, table.startTime, table.endTime),
+  canonicalQueryTimeIdx: index('canonical_query_time_idx').on(table.userId, table.metricType, table.startTime, table.endTime),
+  canonicalQueryAggIdx: index('canonical_query_agg_idx').on(table.userId, table.metricType, table.aggregation, table.startTime, table.endTime),
 }));
 
 export const syncRuns = pgTable('sync_runs', {

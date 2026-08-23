@@ -124,6 +124,7 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
         metric_types: panel.metricTypes,
         start_time: startTimeStr,
         end_time: endTimeStr,
+        aggregation: panel.aggregation,
       });
       setData(results);
     } catch (err: unknown) {

@@ -94,6 +94,12 @@ export async function ensureDatabaseSchema(): Promise<void> {
       CREATE INDEX IF NOT EXISTS canonical_query_idx
         ON metric_entries (user_id, metric_type, dimension, start_time, end_time);
 
+      CREATE INDEX IF NOT EXISTS canonical_query_time_idx
+        ON metric_entries (user_id, metric_type, start_time, end_time);
+
+      CREATE INDEX IF NOT EXISTS canonical_query_agg_idx
+        ON metric_entries (user_id, metric_type, aggregation, start_time, end_time);
+
       CREATE TABLE IF NOT EXISTS sync_runs (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
