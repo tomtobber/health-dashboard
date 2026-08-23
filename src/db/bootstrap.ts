@@ -88,6 +88,29 @@ export async function ensureDatabaseSchema(): Promise<void> {
 
       CREATE INDEX IF NOT EXISTS canonical_query_idx
         ON metric_entries (user_id, metric_type, dimension, start_time, end_time);
+      -- Self-healing backfill for any legacy rows missing parsed value_numeric
+      UPDATE metric_entries
+      SET
+        value_numeric = COALESCE(
+          (raw_payload->'bloodGlucose'->>'bloodGlucoseMilligramsPerDeciliter')::double precision,
+          (raw_payload->'blood-glucose'->>'bloodGlucoseMilligramsPerDeciliter')::double precision,
+          (raw_payload->'bloodGlucose'->>'bloodGlucoseMmolPerLiter')::double precision * 18.0182,
+          (raw_payload->'blood-glucose'->>'bloodGlucoseMmolPerLiter')::double precision * 18.0182,
+          (raw_payload->'bloodGlucose'->>'bloodGlucoseConcentration')::double precision,
+          (raw_payload->'blood-glucose'->>'bloodGlucoseConcentration')::double precision,
+          value_numeric
+        ),
+        unit = COALESCE(unit, 'mg/dL'),
+        dimension = COALESCE(
+          LOWER(raw_payload->'bloodGlucose'->>'measurementSource'),
+          LOWER(raw_payload->'blood-glucose'->>'measurementSource'),
+          dimension
+        )
+      WHERE
+        metric_type IN ('blood-glucose', 'blood_glucose')
+        AND (value_numeric IS NULL OR value_numeric = 0)
+        AND raw_payload IS NOT NULL;
+
 
       CREATE TABLE IF NOT EXISTS sync_runs (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
