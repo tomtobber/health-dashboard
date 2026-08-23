@@ -344,6 +344,7 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
                   <YAxis
                     key={m.metricType}
                     yAxisId={m.metricType}
+                    domain={[0, 'auto']}
                     orientation={idx % 2 === 0 ? 'left' : 'right'}
                     stroke={SERIES_COLORS[idx % SERIES_COLORS.length]}
                     fontSize={11}
@@ -400,6 +401,7 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
                   <YAxis
                     key={m.metricType}
                     yAxisId={m.metricType}
+                    domain={['auto', 'auto']}
                     orientation={idx % 2 === 0 ? 'left' : 'right'}
                     stroke={SERIES_COLORS[idx % SERIES_COLORS.length]}
                     fontSize={11}
