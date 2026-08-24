@@ -52,13 +52,27 @@ logger.info('Resolved frontend static asset path', {
   indexExists: fs.existsSync(path.join(clientDistPath, 'index.html')),
 });
 
-app.use(express.static(clientDistPath));
+app.use(
+  express.static(clientDistPath, {
+    setHeaders: (res, filePath) => {
+      // Content-hashed assets inside assets/ directory (e.g. JS, CSS, fonts) are immutable
+      const normalizedPath = filePath.replace(/\\/g, '/');
+      if (normalizedPath.includes('/assets/')) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      } else if (normalizedPath.endsWith('index.html')) {
+        // index.html must never be cached so users immediately receive updated bundle hashes on deploy
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      }
+    },
+  })
+);
 
 // Express 4 & 5 safe pathless SPA fallback handler (registered strictly after all /api and /health routes)
 app.use((req: Request, res: Response, next: NextFunction) => {
   if (req.method === 'GET' && !req.path.startsWith('/api') && req.path !== '/health') {
     const indexPath = path.join(clientDistPath, 'index.html');
     if (fs.existsSync(indexPath)) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       return res.sendFile(indexPath);
     }
   }
