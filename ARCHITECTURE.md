@@ -499,7 +499,8 @@ type BaselineResult =
   | { ok: true; metricType: string; windowDays: number; windowStart: string;
       windowEnd: string; sampleSize: number; mean: number; stddev: number;
       min: number; max: number; displayName: string; unit?: string }
-  | { ok: false; reason: 'insufficient_data'; sampleSize: number; minRequired: number };
+  | { ok: false; reason: 'insufficient_data'; metricType: string;
+      displayName: string; sampleSize: number; minRequired: number };
 ```
 
 ### `metric_baseline_configs`
