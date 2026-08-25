@@ -362,6 +362,40 @@ ambiguous `'custom'` value mixed into the relative branch):
 time** — a view saved as "last 7 days" always means up to now when
 reopened, not the 7 days that happened to be current when it was saved.
 
+**`weekly_avg` is a fixed calendar-week bucket (ISO, Monday-start), not a
+rolling 7-day window** — consistent with `1m_avg`/`5m_avg`/`daily_avg`
+all being fixed buckets rather than sliding averages. Introduced because
+daily-resolution line charts over long ranges (e.g. a year of steps)
+were judged low-value on their own — weekly buckets surface shape
+without drowning it in day-to-day noise. This is display aggregation
+only; it does not label or claim a trend, which stays out of scope
+until Phase 6 ("Conclusions / insights").
+
+**`weekly_avg` is the default `aggregation` for newly-created panels.**
+No per-`valueType` branching is needed to make this "apply where
+applicable": boolean/category metrics already ignore the `aggregation`
+field entirely and render as event markers regardless (see Multi-Metric
+Overlay Rendering below), so defaulting every new panel to `weekly_avg`
+is a no-op for the metric types it doesn't mean anything for. The
+default can still be overridden per panel via the existing `aggregation`
+field — this only changes what a panel starts as when first created,
+not a constraint on what it can be set to.
+
+**Both `daily_avg` and `weekly_avg` are computed by one shared function,
+`queryAggregatedMetricsFromDb`** (`metricsQueryService.ts` — renamed
+from `queryDailyAggregatedMetricsFromDb` when `weekly_avg` was added),
+which buckets via `date_trunc('day' | 'week', start_time)` and shares a
+single `statement_timeout`. Any future bucket granularity (e.g. a
+hypothetical `monthly_avg`) should extend this same function rather than
+duplicating it.
+
+**Bucket boundaries are computed in UTC, not the user's local
+timezone.** `start_time`/`end_time` are `TIMESTAMPTZ`, and the
+`date_trunc` calls run with no `AT TIME ZONE` conversion, so a "week" is
+Monday 00:00:00 UTC through Sunday 23:59:59.999 UTC regardless of where
+the user is. This applies to `daily_avg` as much as `weekly_avg` — it
+was true before this change but had never been written down.
+
 **Ownership scoping**: every lookup (`get`/`update`/`delete`) is scoped by
 `user_id` in the query itself, not just by `id` — same pattern as
 `metric_definitions`, same reasoning: don't let one user enumerate or
