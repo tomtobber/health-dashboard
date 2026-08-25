@@ -469,6 +469,77 @@ overlays are a legitimate case the API doesn't reject:
   query, same as the read layer above), with an optional per-panel
   override (`line`/`bar`) for numeric/duration series.
 
+## Personal Baselines (phase 6 — in progress)
+
+The first slice of "Conclusions / insights": a personal baseline (mean,
+standard deviation, min, max, sample size) for a single numeric/duration
+metric over a user-configurable window of the user's own history. No
+trend detection, no correlation — those are separate, later slices of
+Phase 6, not part of this one.
+
+**Restricted to `numeric`/`duration` metrics.** Boolean/category metrics
+have no meaningful mean; requesting a baseline for one is a validation
+error (`ValidationError`), not a silently empty or zero result — same
+"explicit, not silent" posture as the rest of this codebase (AGENTS.md
+§1).
+
+**Computed live from the existing reconciled read layer, not a new SQL
+path.** Per Architecture Principle 7, no feature reimplements
+raw-vs-reconciled precedence on its own — baseline stats are computed in
+application code from entries already returned by
+`queryEnrichedMetricEntries` for the resolved absolute time window
+(`now - windowDays` to `now`). No new query duplicates the reconciliation
+logic; no new table stores raw entries.
+
+**Minimum sample size gate.** Fewer than 10 entries in the window is
+treated as "insufficient data," not a misleadingly precise stat. The API
+returns a discriminated union, not a null/zero-filled response:
+```ts
+type BaselineResult =
+  | { ok: true; metricType: string; windowDays: number; windowStart: string;
+      windowEnd: string; sampleSize: number; mean: number; stddev: number;
+      min: number; max: number; displayName: string; unit?: string }
+  | { ok: false; reason: 'insufficient_data'; sampleSize: number; minRequired: number };
+```
+
+### `metric_baseline_configs`
+Per-user, per-metric override of the baseline window — configurable, not
+fixed, per product decision. No FK on `metric_type`, same reasoning as
+`dashboard_views` panels: a config can outlive a since-deleted custom
+metric without erroring.
+
+| column | notes |
+|---|---|
+| user_id | FK to `users.id`, `ON DELETE CASCADE` |
+| metric_type | string, no FK |
+| window_days | int, Zod-validated bounds (e.g. 7–3650) |
+| created_at / updated_at | |
+
+Unique per `(user_id, metric_type)`. **Absence of a row is not an
+error** — it means "use the default," not "unconfigured/broken." Default
+window: 90 days, applied whenever no config row exists for that
+user+metric.
+
+**API surface**:
+- `GET /api/metrics/:metricType/baseline` — computes and returns a
+  `BaselineResult` for the resolved window (saved config, or the 90-day
+  default). An optional `?windowDays=` query override does not persist —
+  use the config endpoint to change the saved default.
+- `GET /api/metrics/:metricType/baseline-config` — returns the saved
+  `window_days` for that metric, or `{ configured: false, default: 90 }`
+  if none exists.
+- `PUT /api/metrics/:metricType/baseline-config` — upserts
+  `{ windowDays }`; Zod-validated; rejects non-numeric/duration
+  `metricType`s the same way the baseline endpoint does.
+
+**Framing (Architecture Principle 6)**: UI copy presents this as "your
+own range over your own history" — e.g. "Your baseline for
+{displayName}: {mean} ± {stddev} {unit}, based on your last {windowDays}
+days (n={sampleSize})." Never "normal," "healthy," "abnormal," or any
+population-referenced language — this is Phase 6's simplest slice and
+still subject to the same no-diagnostic-language rule as correlation
+will be.
+
 ## Data Volume & Resolution Strategy
 
 Some data types (heart rate confirmed; potentially others at similar
