@@ -5,6 +5,7 @@ import { MultiMetricPanel } from './components/MultiMetricPanel';
 import { PanelConfigModal } from './components/PanelConfigModal';
 import { ManualEntryModal } from './components/ManualEntryModal';
 import { MetricDefinitionModal } from './components/MetricDefinitionModal';
+import { BaselineModal } from './components/BaselineModal';
 import { AuthModal } from './components/AuthModal';
 import {
   DashboardView,
@@ -45,6 +46,7 @@ export const App: React.FC = () => {
   const [isLogOpen, setIsLogOpen] = useState(false);
   const [isDefOpen, setIsDefOpen] = useState(false);
   const [editingPanel, setEditingPanel] = useState<DashboardPanelConfig | null | 'new'>(null);
+  const [baselineModalMetric, setBaselineModalMetric] = useState<{ metricType: string; displayName?: string } | null>(null);
 
   // Initialize app
   const initApp = async () => {
@@ -183,6 +185,7 @@ export const App: React.FC = () => {
         onOpenLogModal={() => setIsLogOpen(true)}
         onOpenDefModal={() => setIsDefOpen(true)}
         onAddPanel={() => setEditingPanel('new')}
+        onOpenBaselines={() => setBaselineModalMetric({ metricType: 'heart-rate', displayName: 'Heart Rate' })}
         onTriggerSync={handleTriggerSync}
         isSyncing={isSyncing}
         googleStatus={googleStatus}
@@ -215,6 +218,7 @@ export const App: React.FC = () => {
             onOpenAuth={() => setIsAuthOpen(true)}
             onSeedDemo={handleSeedDemoData}
             onOpenLog={() => setIsLogOpen(true)}
+            onOpenBaseline={(metricType, displayName) => setBaselineModalMetric({ metricType, displayName })}
           />
         ))}
 
@@ -256,6 +260,15 @@ export const App: React.FC = () => {
             loadUserData();
           }}
           onClose={() => setIsDefOpen(false)}
+        />
+      )}
+
+      
+      {baselineModalMetric && (
+        <BaselineModal
+          metricType={baselineModalMetric.metricType}
+          metricDisplayName={baselineModalMetric.displayName}
+          onClose={() => setBaselineModalMetric(null)}
         />
       )}
 

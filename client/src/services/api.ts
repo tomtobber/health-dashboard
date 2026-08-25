@@ -4,6 +4,8 @@ import {
   DashboardView,
   DashboardViewConfig,
   MetricValueType,
+  BaselineResult,
+  BaselineConfigResult,
 } from '../types';
 
 export class ApiError extends Error {
@@ -257,5 +259,21 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ trigger }),
     }).catch(() => ({ status: 'pending' }));
+  },
+  // Baselines
+  async getBaseline(metricType: string, windowDays?: number): Promise<BaselineResult> {
+    const query = windowDays ? `?windowDays=${windowDays}` : '';
+    return request<BaselineResult>(`/api/metrics/${encodeURIComponent(metricType)}/baseline${query}`);
+  },
+
+  async getBaselineConfig(metricType: string): Promise<BaselineConfigResult> {
+    return request<BaselineConfigResult>(`/api/metrics/${encodeURIComponent(metricType)}/baseline-config`);
+  },
+
+  async setBaselineConfig(metricType: string, windowDays: number): Promise<BaselineConfigResult> {
+    return request<BaselineConfigResult>(`/api/metrics/${encodeURIComponent(metricType)}/baseline-config`, {
+      method: 'PUT',
+      body: JSON.stringify({ windowDays }),
+    });
   },
 };

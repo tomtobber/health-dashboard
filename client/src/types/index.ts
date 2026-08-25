@@ -67,3 +67,31 @@ export interface DashboardView {
   createdAt: string;
   updatedAt: string;
 }
+
+export type BaselineResult =
+  | {
+      ok: true;
+      metricType: string;
+      windowDays: number;
+      windowStart: string;
+      windowEnd: string;
+      sampleSize: number;
+      mean: number;
+      stddev: number;
+      min: number;
+      max: number;
+      displayName: string;
+      unit?: string;
+    }
+  | {
+      ok: false;
+      reason: 'insufficient_data';
+      metricType: string;
+      displayName: string;
+      sampleSize: number;
+      minRequired: number;
+    };
+
+export type BaselineConfigResult =
+  | { configured: true; metricType: string; windowDays: number }
+  | { configured: false; metricType: string; default: number };

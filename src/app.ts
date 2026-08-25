@@ -10,6 +10,7 @@ import { syncRouter } from './routes/syncRoutes';
 import { metricDefinitionRouter } from './routes/metricDefinitionRoutes';
 import { manualEntryRouter } from './routes/manualEntryRoutes';
 import { dashboardViewRouter } from './routes/dashboardViewRoutes';
+import { baselineRouter } from './routes/baselineRoutes';
 import { AppError } from './errors/AppError';
 import { logger } from './utils/logger';
 
@@ -26,6 +27,7 @@ app.use('/api/sync', syncRouter);
 app.use('/api/metric-definitions', metricDefinitionRouter);
 app.use('/api/metric-entries', manualEntryRouter);
 app.use('/api/dashboard-views', dashboardViewRouter);
+app.use('/api/metrics', baselineRouter);
 
 app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

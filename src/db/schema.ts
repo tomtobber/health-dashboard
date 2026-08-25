@@ -109,3 +109,14 @@ export const dashboardViews = pgTable('dashboard_views', {
 }, (table) => ({
   userNameIdx: uniqueIndex('dashboard_views_user_name_idx').on(table.userId, table.name),
 }));
+
+export const metricBaselineConfigs = pgTable('metric_baseline_configs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  metricType: text('metric_type').notNull(),
+  windowDays: integer('window_days').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  userMetricIdx: uniqueIndex('metric_baseline_configs_user_metric_idx').on(table.userId, table.metricType),
+}));

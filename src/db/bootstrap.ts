@@ -128,6 +128,19 @@ export async function ensureDatabaseSchema(): Promise<void> {
 
       CREATE UNIQUE INDEX IF NOT EXISTS dashboard_views_user_name_idx 
         ON dashboard_views (user_id, name);
+
+      CREATE TABLE IF NOT EXISTS metric_baseline_configs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        metric_type TEXT NOT NULL,
+        window_days INTEGER NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS metric_baseline_configs_user_metric_idx
+        ON metric_baseline_configs (user_id, metric_type);
+  
     `);
 
     logger.info('Database schema verified and ready.', {

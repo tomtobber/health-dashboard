@@ -52,6 +52,7 @@ interface MultiMetricPanelProps {
   onOpenAuth?: () => void;
   onSeedDemo?: () => void;
   onOpenLog?: () => void;
+  onOpenBaseline?: (metricType: string, displayName?: string) => void;
 }
 
 const SERIES_COLORS = [
@@ -65,7 +66,7 @@ const SERIES_COLORS = [
   '#14b8a6', // Teal
 ];
 
-export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user, onEdit, onRemove, onOpenAuth, onSeedDemo, onOpenLog }) => {
+export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user, onEdit, onRemove, onOpenAuth, onSeedDemo, onOpenLog, onOpenBaseline }) => {
   const [data, setData] = useState<EnrichedMetricQueryResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -219,10 +220,34 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
                 color: SERIES_COLORS[idx % SERIES_COLORS.length],
                 borderWidth: '1px',
                 borderStyle: 'solid',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
               }}
             >
-              {m.displayName} {m.unit ? `(${m.unit})` : ''}
-              {m.isArchived && ' [Archived]'}
+              <span>
+                {m.displayName} {m.unit ? `(${m.unit})` : ''}
+                {m.isArchived && ' [Archived]'}
+              </span>
+              {onOpenBaseline && (m.valueType === 'numeric' || m.valueType === 'duration') && (
+                <button
+                  type="button"
+                  onClick={() => onOpenBaseline(m.metricType, m.displayName)}
+                  title="View Historical Baseline"
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'currentColor',
+                    cursor: 'pointer',
+                    fontSize: '0.6875rem',
+                    textDecoration: 'underline',
+                    padding: '0 2px',
+                    opacity: 0.85,
+                  }}
+                >
+                  Baseline
+                </button>
+              )}
             </span>
           ))}
           {data.length === 0 && !loading && (
