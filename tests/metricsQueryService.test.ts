@@ -587,5 +587,74 @@ describe('Metrics Canonical Query Path & SQL Daily Aggregation', () => {
     expect(gapHRtoWeight).toBe(4 * 24 * 60 * 60 * 1000);
     expect(gapWeightSparse).toBe(7 * 24 * 60 * 60 * 1000);
     expect(gapWeightSparse / gapHRtoWeight).toBeCloseTo(1.75, 2);
+    });
+
+  test('SQL weekly_avg aggregation returns exactly 1 row per ISO week (Monday-start) with computed average', async () => {
+    // Seed 14 daily entries across two distinct ISO weeks:
+    // Week 1 (Monday Aug 3, 2026 to Sunday Aug 9, 2026): 7 days with values 60, 62, 64, 66, 68, 70, 72 (Expected AVG: 66 bpm)
+    // Week 2 (Monday Aug 10, 2026 to Sunday Aug 16, 2026): 7 days with values 80, 80, 80, 80, 80, 80, 80 (Expected AVG: 80 bpm)
+    const weeklyEntries = [];
+    const baseW1 = new Date('2026-08-03T12:00:00Z'); // Aug 3 2026 is Monday
+    for (let i = 0; i < 7; i++) {
+      const dayDate = new Date(baseW1.getTime() + i * 86400000);
+      weeklyEntries.push({
+        userId: testUserId,
+        provider: 'google_health',
+        metricType: 'weekly-test-resting-hr',
+        startTime: dayDate,
+        endTime: new Date(dayDate.getTime() + 3600000),
+        valueNumeric: 60 + i * 2,
+        unit: 'bpm',
+        dimension: 'default',
+        sourceStream: 'raw',
+        aggregation: 'daily_avg',
+      });
+    }
+
+    const baseW2 = new Date('2026-08-10T12:00:00Z'); // Aug 10 2026 is Monday
+    for (let i = 0; i < 7; i++) {
+      const dayDate = new Date(baseW2.getTime() + i * 86400000);
+      weeklyEntries.push({
+        userId: testUserId,
+        provider: 'google_health',
+        metricType: 'weekly-test-resting-hr',
+        startTime: dayDate,
+        endTime: new Date(dayDate.getTime() + 3600000),
+        valueNumeric: 80,
+        unit: 'bpm',
+        dimension: 'default',
+        sourceStream: 'raw',
+        aggregation: 'daily_avg',
+      });
+    }
+
+    await db.insert(metricEntries).values(weeklyEntries);
+
+    const weeklyResults = await queryBatchEnrichedMetrics({
+      userId: testUserId,
+      metricTypes: ['weekly-test-resting-hr'],
+      startTime: new Date('2026-08-03T00:00:00Z'),
+      endTime: new Date('2026-08-17T00:00:00Z'),
+      aggregation: 'weekly_avg',
+    });
+
+    expect(weeklyResults).toHaveLength(1);
+    const hrWeekly = weeklyResults[0];
+
+    // Assert exactly 2 rows returned for 2 weeks
+    expect(hrWeekly.entries).toHaveLength(2);
+
+    // Week 1 check
+    const w1 = hrWeekly.entries[0];
+    expect(new Date(w1.startTime).toISOString()).toBe('2026-08-03T00:00:00.000Z'); // Monday 00:00:00 UTC
+    expect(w1.valueNumeric).toBe(66);
+    expect(w1.aggregation).toBe('weekly_avg');
+
+    // Week 2 check
+    const w2 = hrWeekly.entries[1];
+    expect(new Date(w2.startTime).toISOString()).toBe('2026-08-10T00:00:00.000Z'); // Monday 00:00:00 UTC
+    expect(w2.valueNumeric).toBe(80);
+    expect(w2.aggregation).toBe('weekly_avg');
   });
+
 });

@@ -91,7 +91,7 @@ export interface DashboardPanelConfig {
   timeRange:
     | { type: 'relative'; value: 'last_24h' | 'last_7d' | 'last_30d' | 'last_90d' | 'last_1y' }
     | { type: 'absolute'; startTime: string; endTime: string };
-  aggregation: 'raw' | '1m_avg' | '5m_avg' | 'daily_avg';
+  aggregation: 'raw' | '1m_avg' | '5m_avg' | 'daily_avg' | 'weekly_avg';
   chartType?: 'line' | 'bar';
 }
 

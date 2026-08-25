@@ -19,14 +19,14 @@ const DEFAULT_PANELS: DashboardPanelConfig[] = [
     id: 'panel-cardio',
     metricTypes: ['heart-rate', 'daily-resting-heart-rate', 'steps'],
     timeRange: { type: 'relative', value: 'last_7d' },
-    aggregation: 'daily_avg',
+    aggregation: 'weekly_avg',
     chartType: 'line',
   },
   {
     id: 'panel-recovery',
     metricTypes: ['sleep', 'daily-heart-rate-variability'],
     timeRange: { type: 'relative', value: 'last_30d' },
-    aggregation: 'daily_avg',
+    aggregation: 'weekly_avg',
     chartType: 'line',
   },
 ];

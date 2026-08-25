@@ -156,7 +156,7 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
   const categoryMetrics = useMemo(() => safeData.filter((d) => d && d.valueType === 'category'), [safeData]);
 
   const chartData = useMemo(() => {
-    const isDaily = panel.aggregation === 'daily_avg' || (panel.timeRange.type === 'relative' && panel.timeRange.value !== 'last_24h');
+    const isDaily = panel.aggregation === 'daily_avg' || panel.aggregation === 'weekly_avg' || (panel.timeRange.type === 'relative' && panel.timeRange.value !== 'last_24h');
     return buildChartTimelineData(numericMetrics, isDaily);
   }, [numericMetrics, panel.aggregation, panel.timeRange]);
 

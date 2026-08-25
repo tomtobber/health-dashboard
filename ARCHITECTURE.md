@@ -351,7 +351,7 @@ ambiguous `'custom'` value mixed into the relative branch):
       metricTypes: string[],        // 1+, non-empty — overlay when >1
       timeRange: { type: 'relative', value: 'last_24h' | 'last_7d' | 'last_30d' | 'last_90d' | 'last_1y' }
                | { type: 'absolute', startTime: string, endTime: string },
-      aggregation: 'raw' | '1m_avg' | '5m_avg' | 'daily_avg',
+      aggregation: 'raw' | '1m_avg' | '5m_avg' | 'daily_avg' | 'weekly_avg',
       chartType?: 'line' | 'bar'    // optional override; default inferred per-metric from valueType
     }
   ]

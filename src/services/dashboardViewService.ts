@@ -19,7 +19,7 @@ export const PanelConfigSchema = z.object({
       endTime: z.string().datetime(),
     }),
   ]),
-  aggregation: z.enum(['raw', '1m_avg', '5m_avg', 'daily_avg']),
+  aggregation: z.enum(['raw', '1m_avg', '5m_avg', 'daily_avg', 'weekly_avg']),
   chartType: z.enum(['line', 'bar']).optional(),
 });
 

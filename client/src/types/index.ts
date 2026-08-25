@@ -51,7 +51,7 @@ export interface DashboardPanelConfig {
   id: string;
   metricTypes: string[];
   timeRange: TimeRange;
-  aggregation: 'raw' | '1m_avg' | '5m_avg' | 'daily_avg';
+  aggregation: 'raw' | '1m_avg' | '5m_avg' | 'daily_avg' | 'weekly_avg';
   chartType?: 'line' | 'bar';
 }
 

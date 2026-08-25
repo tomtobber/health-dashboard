@@ -76,8 +76,8 @@ export const PanelConfigModal: React.FC<PanelConfigModalProps> = ({
   const [endTime, setEndTime] = useState<string>(
     panel && panel.timeRange.type === 'absolute' ? panel.timeRange.endTime.slice(0, 10) : ''
   );
-  const [aggregation, setAggregation] = useState<'raw' | '1m_avg' | '5m_avg' | 'daily_avg'>(
-    panel ? panel.aggregation : 'daily_avg'
+  const [aggregation, setAggregation] = useState<'raw' | '1m_avg' | '5m_avg' | 'daily_avg' | 'weekly_avg'>(
+    panel ? panel.aggregation : 'weekly_avg'
   );
   const [chartType, setChartType] = useState<'line' | 'bar'>(panel?.chartType || 'line');
 
@@ -297,7 +297,8 @@ export const PanelConfigModal: React.FC<PanelConfigModalProps> = ({
                 value={aggregation}
                 onChange={(e) => setAggregation(e.target.value as any)}
               >
-                <option value="daily_avg">Daily Resolution (Recommended)</option>
+                <option value="weekly_avg">Weekly Average (Default)</option>
+                <option value="daily_avg">Daily Resolution</option>
                 <option value="5m_avg">5-Minute Intervals</option>
                 <option value="1m_avg">1-Minute Intervals</option>
                 <option value="raw">Raw / Exact Timestamps</option>

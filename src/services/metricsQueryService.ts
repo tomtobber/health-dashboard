@@ -38,59 +38,59 @@ export interface EnrichedMetricQueryResult {
 }
 
 /**
- * Determine whether a metric (canonical or user-defined custom) represents a cumulative
- * quantity that should be summed (SUM) rather than averaged (AVG) when aggregating daily.
+ * Filter out raw stream entries when a reconciled stream entry covers the identical timestamp window.
  */
-export function isCumulativeMetric(metricType: string, valueType?: string, unit?: string | null): boolean {
-  if (valueType === 'duration') return true;
-  const normalizedUnit = (unit || '').toLowerCase().trim();
-  const cumulativeUnits = new Set([
-    'count', 'steps', 'ml', 'oz', 'l', 'liter', 'liters',
-    'kcal', 'calories', 'points', 'reps', 'minutes', 'seconds', 'hours'
-  ]);
-  if (cumulativeUnits.has(normalizedUnit)) return true;
-
-  const cumulativeTypes = new Set([
-    'steps', 'water-intake', 'hydration-log', 'sleep', 'total-calories',
-    'active-zone-minutes', 'distance', 'floors-climbed', 'elevation-gain'
-  ]);
-  return cumulativeTypes.has(metricType.toLowerCase());
-}
-
 export function filterReconciledOverRaw(entries: MetricEntryWithDelete[]): NormalizedMetricEntry[] {
   const activeEntries = entries.filter((e) => !e.deletedAt);
 
-  const reconciledMap = new Map<string, NormalizedMetricEntry>();
-  const rawEntries: NormalizedMetricEntry[] = [];
-
+  const reconciledTimeIntervals = new Set<string>();
   for (const entry of activeEntries) {
-    const dim = entry.dimension || 'default';
     if (entry.sourceStream === 'reconciled') {
-      const key = `${dim}_${entry.startTime.toISOString()}-${entry.endTime.toISOString()}`;
-      reconciledMap.set(key, entry);
-    } else {
-      rawEntries.push(entry);
+      const startMs = new Date(entry.startTime).getTime();
+      const endMs = new Date(entry.endTime).getTime();
+      const dim = entry.dimension || 'default';
+      reconciledTimeIntervals.add(`${dim}_${startMs}_${endMs}`);
     }
   }
 
-  const result: NormalizedMetricEntry[] = Array.from(reconciledMap.values());
+  const result: NormalizedMetricEntry[] = [];
+  for (const entry of activeEntries) {
+    const startMs = new Date(entry.startTime).getTime();
+    const endMs = new Date(entry.endTime).getTime();
+    const dim = entry.dimension || 'default';
+    const key = `${dim}_${startMs}_${endMs}`;
 
-  for (const raw of rawEntries) {
-    const dim = raw.dimension || 'default';
-    const rawKey = `${dim}_${raw.startTime.toISOString()}-${raw.endTime.toISOString()}`;
-    if (!reconciledMap.has(rawKey)) {
-      result.push(raw);
+    if (entry.sourceStream === 'raw' && reconciledTimeIntervals.has(key)) {
+      continue;
     }
+
+    result.push(entry);
   }
 
-  return result.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+  return result;
 }
 
 /**
- * SQL-level Daily Aggregation Query for continuous and cumulative metrics.
- * Dynamically applies SUM vs AVG based on sumMetricTypes array, supporting custom & canonical metrics.
+ * Determines whether a metric is cumulative (aggregated by SUM) or continuous (aggregated by AVG).
  */
-async function queryDailyAggregatedMetricsFromDb(
+export function isCumulativeMetric(metricType: string, valueType?: string, unit?: string | null): boolean {
+  if (valueType === 'duration') return true;
+  if (metricType === 'steps' || metricType === 'sleep' || metricType === 'water-intake' || metricType === 'active-zone-minutes' || metricType === 'distance') {
+    return true;
+  }
+  const u = (unit || '').toLowerCase();
+  if (['count', 'reps', 'steps', 'ml', 'fl_oz', 'l', 'kcal', 'cal', 'kJ', 'minutes', 'seconds', 'hours'].includes(u)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * SQL-level Time-Aggregated Query (daily_avg, weekly_avg) for continuous and cumulative metrics.
+ * Uses date_trunc on TIMESTAMPTZ (session/UTC timezone matching daily_avg).
+ * Dynamically applies SUM vs AVG for daily aggregation, and AVG for weekly_avg.
+ */
+async function queryAggregatedMetricsFromDb(
   userId: string,
   metricTypes: string[],
   sumMetricTypes: string[],
@@ -100,6 +100,8 @@ async function queryDailyAggregatedMetricsFromDb(
   targetAggregation = 'daily_avg'
 ): Promise<Map<string, NormalizedMetricEntry[]>> {
   const isSpecificDimension = Boolean(dimension && dimension.trim());
+  const isWeekly = targetAggregation === 'weekly_avg';
+  const truncUnit = isWeekly ? 'week' : 'day';
 
   const queryText = `
     WITH ranked_entries AS (
@@ -117,7 +119,7 @@ async function queryDailyAggregatedMetricsFromDb(
         unit,
         source_stream,
         aggregation,
-        date_trunc('day', start_time) AS day_bucket,
+        date_trunc('${truncUnit}', start_time) AS time_bucket,
         ROW_NUMBER() OVER (
           PARTITION BY user_id, metric_type, dimension, start_time, end_time
           ORDER BY CASE WHEN source_stream = 'reconciled' THEN 0 ELSE 1 END
@@ -136,10 +138,10 @@ async function queryDailyAggregatedMetricsFromDb(
       provider,
       metric_type,
       dimension,
-      day_bucket AS start_time,
-      (day_bucket + interval '1 day' - interval '1 millisecond') AS end_time,
+      time_bucket AS start_time,
+      (time_bucket + interval '1 ${truncUnit}' - interval '1 millisecond') AS end_time,
       CASE 
-        WHEN metric_type = ANY($6::text[])
+        WHEN NOT ${isWeekly} AND metric_type = ANY($6::text[])
           THEN ROUND(SUM(value_numeric)::numeric, 2)::double precision
         ELSE
           ROUND(AVG(value_numeric)::numeric, 2)::double precision
@@ -150,8 +152,8 @@ async function queryDailyAggregatedMetricsFromDb(
       $5 AS aggregation
     FROM ranked_entries
     WHERE rn = 1
-    GROUP BY user_id, provider, metric_type, dimension, day_bucket
-    ORDER BY day_bucket ASC;
+    GROUP BY user_id, provider, metric_type, dimension, time_bucket
+    ORDER BY time_bucket ASC;
   `;
 
   const queryParams: unknown[] = [userId, metricTypes, startTime, endTime, targetAggregation, sumMetricTypes];
@@ -183,25 +185,35 @@ async function queryDailyAggregatedMetricsFromDb(
     }
 
     for (const row of result.rows) {
+      const entry: NormalizedMetricEntry = {
+        userId: row.user_id,
+        provider: row.provider,
+        metricType: row.metric_type,
+        startTime: row.start_time,
+        endTime: row.end_time,
+        valueNumeric: row.value_numeric,
+        valueMin: row.value_min,
+        valueMax: row.value_max,
+        unit: row.unit,
+        dimension: row.dimension,
+        sourceStream: 'raw',
+        aggregation: row.aggregation,
+      };
       const list = resultMap.get(row.metric_type);
       if (list) {
-        list.push({
-          userId: row.user_id,
-          provider: row.provider,
-          metricType: row.metric_type,
-          startTime: new Date(row.start_time),
-          endTime: new Date(row.end_time),
-          valueNumeric: row.value_numeric,
-          valueMin: row.value_min,
-          valueMax: row.value_max,
-          unit: row.unit,
-          dimension: row.dimension,
-          aggregation: row.aggregation,
-        });
+        list.push(entry);
       }
     }
 
     return resultMap;
+  } catch (err: unknown) {
+    throw new DatabaseError('Failed to execute SQL aggregation query', {
+      operation: 'queryAggregatedMetricsFromDb',
+      userId,
+      metricTypes,
+      targetAggregation,
+      cause: err instanceof Error ? err.message : String(err),
+    }, err);
   } finally {
     client.release();
   }
@@ -226,11 +238,11 @@ async function queryScalarMetricEntriesFromDb(
     isNull(metricEntries.deletedAt),
   ];
 
-  if (dimension) {
+  if (dimension && dimension.trim()) {
     whereConditions.push(eq(metricEntries.dimension, dimension));
   }
 
-  if (aggregation && aggregation !== 'all' && aggregation !== 'auto' && aggregation !== 'daily_avg' && aggregation !== 'daily_sum') {
+  if (aggregation && aggregation !== 'all' && aggregation !== 'auto' && aggregation !== 'daily_avg' && aggregation !== 'daily_sum' && aggregation !== 'weekly_avg') {
     whereConditions.push(eq(metricEntries.aggregation, aggregation));
   }
 
@@ -256,49 +268,38 @@ async function queryScalarMetricEntriesFromDb(
     .from(metricEntries)
     .where(and(...whereConditions));
 
-  const rowsByMetric = new Map<string, MetricEntryWithDelete[]>();
+  const byMetric = new Map<string, MetricEntryWithDelete[]>();
   for (const mt of metricTypes) {
-    rowsByMetric.set(mt, []);
+    byMetric.set(mt, []);
   }
 
-  for (const row of rows) {
-    const list = rowsByMetric.get(row.metricType);
+  for (const r of rows) {
+    const list = byMetric.get(r.metricType);
     if (list) {
-      list.push({
-        userId: row.userId,
-        provider: row.provider,
-        metricType: row.metricType,
-        externalId: row.externalId || undefined,
-        startTime: row.startTime,
-        endTime: row.endTime,
-        valueNumeric: row.valueNumeric ?? undefined,
-        valueText: row.valueText ?? undefined,
-        valueMin: row.valueMin ?? undefined,
-        valueMax: row.valueMax ?? undefined,
-        unit: row.unit,
-        dimension: row.dimension,
-        sourceStream: row.sourceStream as 'raw' | 'reconciled' | null | undefined,
-        aggregation: row.aggregation,
-        deletedAt: row.deletedAt,
-      });
+      list.push(r as MetricEntryWithDelete);
     }
   }
 
   const resultMap = new Map<string, NormalizedMetricEntry[]>();
   for (const mt of metricTypes) {
-    const metricRows = rowsByMetric.get(mt) || [];
+    const metricRows = byMetric.get(mt) || [];
     resultMap.set(mt, filterReconciledOverRaw(metricRows));
   }
 
   return resultMap;
 }
 
+/**
+ * Single-metric query from database.
+ * Transparently delegates to SQL daily/weekly aggregation for daily_avg/weekly_avg requests.
+ */
 export async function queryMetricEntriesFromDb(filter: MetricQueryFilter): Promise<NormalizedMetricEntry[]> {
   try {
+    const isWeekly = filter.aggregation === 'weekly_avg';
     const isDaily = filter.aggregation === 'daily_avg' || filter.aggregation === 'daily_sum' || filter.aggregation === 'daily';
     let entriesMap: Map<string, NormalizedMetricEntry[]>;
 
-    if (isDaily) {
+    if (isWeekly || isDaily) {
       // Resolve cumulative status from metric definition or canonical catalog
       const [def] = await db
         .select()
@@ -309,14 +310,14 @@ export async function queryMetricEntriesFromDb(filter: MetricQueryFilter): Promi
         ? isCumulativeMetric(def.metricType, def.valueType, def.unit)
         : isCumulativeMetric(filter.metricType, getCanonicalProviderMetricMetadata(filter.metricType).valueType, getCanonicalProviderMetricMetadata(filter.metricType).unit);
 
-      entriesMap = await queryDailyAggregatedMetricsFromDb(
+      entriesMap = await queryAggregatedMetricsFromDb(
         filter.userId,
         [filter.metricType],
-        isCumul ? [filter.metricType] : [],
+        (!isWeekly && isCumul) ? [filter.metricType] : [],
         filter.startTime,
         filter.endTime,
         filter.dimension,
-        filter.aggregation || 'daily_avg'
+        filter.aggregation || (isWeekly ? 'weekly_avg' : 'daily_avg')
       );
     } else {
       entriesMap = await queryScalarMetricEntriesFromDb(
@@ -358,7 +359,7 @@ export async function queryEnrichedMetricEntries(filter: MetricQueryFilter): Pro
 
 /**
  * Batch enriched metric query eliminating N+1 lookups for multi-metric dashboard views.
- * Handles both SQL daily aggregation and scalar stream queries with explicit column selection.
+ * Handles both SQL daily/weekly aggregation and scalar stream queries with explicit column selection.
  */
 export async function queryBatchEnrichedMetrics(filter: BatchMetricQueryFilter): Promise<EnrichedMetricQueryResult[]> {
   const { userId, metricTypes, startTime, endTime, dimension, aggregation } = filter;
@@ -399,19 +400,20 @@ export async function queryBatchEnrichedMetrics(filter: BatchMetricQueryFilter):
       }
     }
 
-    // 3. Query entries (SQL daily aggregation if daily, else scalar selection)
+    // 3. Query entries
+    const isWeekly = aggregation === 'weekly_avg';
     const isDaily = aggregation === 'daily_avg' || aggregation === 'daily_sum' || aggregation === 'daily';
     let entriesByMetric: Map<string, NormalizedMetricEntry[]>;
 
-    if (isDaily) {
-      entriesByMetric = await queryDailyAggregatedMetricsFromDb(
+    if (isWeekly || isDaily) {
+      entriesByMetric = await queryAggregatedMetricsFromDb(
         userId,
         metricTypes,
-        sumMetricTypes,
+        (!isWeekly ? sumMetricTypes : []),
         startTime,
         endTime,
         dimension,
-        aggregation || 'daily_avg'
+        aggregation || (isWeekly ? 'weekly_avg' : 'daily_avg')
       );
     } else {
       entriesByMetric = await queryScalarMetricEntriesFromDb(
@@ -424,56 +426,49 @@ export async function queryBatchEnrichedMetrics(filter: BatchMetricQueryFilter):
       );
     }
 
-    // 4. Assemble enriched results for all requested metricTypes
+    // 4. Assemble enriched results
     const results: EnrichedMetricQueryResult[] = [];
 
     for (const mt of metricTypes) {
       const def = defMap.get(mt);
-      let displayName: string;
-      let valueType: 'numeric' | 'duration' | 'boolean' | 'category';
-      let unit: string | null;
-      let categoryValues: string[] | null;
-      let isCustom: boolean;
-      let isArchived: boolean;
-
-      if (def) {
-        displayName = def.displayName;
-        valueType = def.valueType as 'numeric' | 'duration' | 'boolean' | 'category';
-        unit = def.unit;
-        categoryValues = def.categoryValues;
-        isCustom = true;
-        isArchived = def.archivedAt !== null;
-      } else {
-        const canonical = getCanonicalProviderMetricMetadata(mt);
-        displayName = canonical.displayName;
-        valueType = canonical.valueType;
-        unit = canonical.unit;
-        categoryValues = canonical.categoryValues || null;
-        isCustom = false;
-        isArchived = false;
-      }
-
       const entries = entriesByMetric.get(mt) || [];
 
-      results.push({
-        metricType: mt,
-        displayName,
-        valueType,
-        unit,
-        categoryValues,
-        isCustom,
-        isArchived,
-        entries,
-      });
+      if (def) {
+        results.push({
+          metricType: def.metricType,
+          displayName: def.displayName,
+          valueType: def.valueType as 'numeric' | 'duration' | 'boolean' | 'category',
+          unit: def.unit,
+          categoryValues: (def.categoryValues as string[]) || null,
+          isCustom: true,
+          isArchived: Boolean(def.archivedAt),
+          entries,
+        });
+      } else {
+        const canonical = getCanonicalProviderMetricMetadata(mt);
+        results.push({
+          metricType: mt,
+          displayName: canonical.displayName,
+          valueType: canonical.valueType,
+          unit: canonical.unit,
+          categoryValues: canonical.categoryValues || null,
+          isCustom: false,
+          isArchived: false,
+          entries,
+        });
+      }
     }
 
     return results;
   } catch (err: unknown) {
-    if (err instanceof ValidationError) throw err;
-    throw new DatabaseError('Failed to query batch enriched metrics', {
+    if (err instanceof ValidationError) {
+      throw err;
+    }
+    throw new DatabaseError('Failed to batch query enriched metrics', {
       operation: 'queryBatchEnrichedMetrics',
       userId,
       metricTypes,
+      aggregation,
       cause: err instanceof Error ? err.message : String(err),
     }, err);
   }
