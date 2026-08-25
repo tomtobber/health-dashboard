@@ -116,6 +116,48 @@ describe('Phase 6 - Personal Baselines HTTP Routes', () => {
       expect(res.body.code).toBe('VALIDATION_ERROR');
     });
 
+
+    it('returns insufficient_data with metricType and displayName when sample size < 10 over HTTP', async () => {
+      // Create a metric with only 3 entries
+      await db.insert(metricDefinitions).values({
+        userId: testUserId,
+        metricType: 'daily-stretch-minutes',
+        displayName: 'Daily Stretching',
+        valueType: 'duration',
+        unit: 'minutes',
+      });
+
+      const now = new Date();
+      for (let i = 0; i < 3; i++) {
+        const time = new Date(now.getTime() - (i + 1) * 86400000);
+        await db.insert(metricEntries).values({
+          userId: testUserId,
+          provider: 'manual',
+          metricType: 'daily-stretch-minutes',
+          startTime: time,
+          endTime: time,
+          valueNumeric: 15,
+          unit: 'minutes',
+          dimension: 'default',
+          sourceStream: null,
+          aggregation: 'raw',
+        });
+      }
+
+      const res = await request(app)
+        .get('/api/metrics/daily-stretch-minutes/baseline')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        ok: false,
+        reason: 'insufficient_data',
+        metricType: 'daily-stretch-minutes',
+        displayName: 'Daily Stretching',
+        sampleSize: 3,
+        minRequired: 10,
+      });
+    });
     it('rejects out-of-bounds ?windowDays= override (too large > 3650)', async () => {
       const res = await request(app)
         .get('/api/metrics/water-intake-liters/baseline?windowDays=5000')
