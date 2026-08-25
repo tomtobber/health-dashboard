@@ -469,7 +469,7 @@ overlays are a legitimate case the API doesn't reject:
   query, same as the read layer above), with an optional per-panel
   override (`line`/`bar`) for numeric/duration series.
 
-## Personal Baselines (phase 6 — in progress)
+## Personal Baselines (phase 6 — first slice complete)
 
 The first slice of "Conclusions / insights": a personal baseline (mean,
 standard deviation, min, max, sample size) for a single numeric/duration
@@ -533,13 +533,31 @@ user+metric.
   `{ windowDays }`; Zod-validated; rejects non-numeric/duration
   `metricType`s the same way the baseline endpoint does.
 
-**Framing (Architecture Principle 6)**: UI copy presents this as "your
-own range over your own history" — e.g. "Your baseline for
-{displayName}: {mean} ± {stddev} {unit}, based on your last {windowDays}
-days (n={sampleSize})." Never "normal," "healthy," "abnormal," or any
-population-referenced language — this is Phase 6's simplest slice and
-still subject to the same no-diagnostic-language rule as correlation
-will be.
+**Framing (Architecture Principle 6) — implemented, exact copy reviewed
+against the principle before shipping:**
+
+| UI element | Exact copy |
+|---|---|
+| Header nav button | "Personal Baselines" |
+| Panel series action | "View Historical Baseline" |
+| Modal title | "Personal Baseline: {displayName}" |
+| Baseline summary | "Your baseline for {displayName}: {mean} ± {stddev} {unit}, based on your last {windowDays} days (n={sampleSize})." |
+| Range detail | "Observed range in this window: {min} – {max} {unit}" |
+| Insufficient-data notice | "Insufficient data to calculate a baseline for {displayName}. Found {sampleSize} entries in the last {windowDays} days (minimum required: {minRequired})." |
+| Window config field + helper | "Historical Window (Days)" / "Calculated over your trailing history up to right now." |
+| Save action | "Save Window" |
+
+No "normal," "healthy," "abnormal," "target," "goal," "good," or "bad,"
+or any other population-referenced or evaluative language anywhere in
+the feature — this is Phase 6's simplest slice and still subject to the
+same no-diagnostic-language rule as trend detection and correlation
+will be. Any future copy change to this feature must be re-checked
+against this same list before shipping, not just against the general
+principle.
+
+**UI entry points**: `Header.tsx` (global "Personal Baselines" nav
+action) and `MultiMetricPanel.tsx` (per-series "View Historical
+Baseline" action), both opening `BaselineModal.tsx`.
 
 ## Data Volume & Resolution Strategy
 
