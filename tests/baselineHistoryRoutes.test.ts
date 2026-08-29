@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { app } from '../src/app';
 import { db, pool } from '../src/db';
-import { users, metricDefinitions, metricEntries, metricBaselineHistory } from '../src/db/schema';
+import { users, metricEntries } from '../src/db/schema';
 import jwt from 'jsonwebtoken';
 import { eq } from 'drizzle-orm';
 

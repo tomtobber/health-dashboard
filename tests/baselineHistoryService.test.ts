@@ -1,11 +1,10 @@
 import { db, pool } from '../src/db';
-import { users, metricDefinitions, metricEntries, metricBaselineHistory } from '../src/db/schema';
+import { users, metricDefinitions, metricEntries } from '../src/db/schema';
 import {
   refreshBaselineHistory,
   getMetricBaselineHistory,
   getFullyElapsedMonthBoundaries,
   BASELINE_HISTORY_WINDOW_DAYS,
-  MIN_BASELINE_HISTORY_SAMPLE_SIZE,
 } from '../src/services/baselineHistoryService';
 import { computeMetricBaseline, getMetricBaseline } from '../src/services/baselineService';
 import { eq } from 'drizzle-orm';
