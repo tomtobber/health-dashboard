@@ -86,6 +86,9 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     initApp();
+    if (typeof window !== 'undefined' && window.location.search.includes('google_connected=true')) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
   }, []);
 
 

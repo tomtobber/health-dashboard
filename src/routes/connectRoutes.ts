@@ -90,6 +90,15 @@ connectRouter.get(
       healthUserId: tokens.healthUserId,
     });
 
+    const isBrowser = Boolean(
+      req.headers['accept']?.includes('text/html') ||
+      req.headers['sec-fetch-dest'] === 'document'
+    );
+
+    if (isBrowser) {
+      return res.redirect('/?google_connected=true');
+    }
+
     return res.json({
       message: 'Google Health account successfully connected',
       provider: 'google_health',
