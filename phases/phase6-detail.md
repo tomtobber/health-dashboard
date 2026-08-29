@@ -471,3 +471,24 @@ Persist point-in-time monthly baseline snapshots for numeric and duration metric
   - Auth: required
   - Validates ISO datetime range
   - Returns: `{ metricType: string, history: BaselineHistoryItem[] }` sorted by `computed_at` ascending
+
+### Frontend Integration Contract (Future UI Work)
+
+When wiring the "Refresh Baseline History" action in the UI:
+1. **Client-Side Pagination Loop**: Because `POST /api/metrics/baseline-history/refresh` is bounded to `MAX_SNAPSHOTS_PER_REFRESH = 50` and returns `hasMore: boolean`, the client MUST NOT issue a single fire-and-forget request.
+2. **Loop Implementation**: The frontend service/handler must execute a loop:
+   ```ts
+   let hasMore = true;
+   let cumulativeAdded = 0;
+   let iterations = 0;
+   const MAX_CLIENT_ITERATIONS = 20; // Safeguard
+
+   while (hasMore && iterations < MAX_CLIENT_ITERATIONS) {
+     const summary = await api.refreshBaselineHistory();
+     cumulativeAdded += summary.snapshotsAdded;
+     hasMore = summary.hasMore;
+     iterations++;
+     // Optionally update UI progress message (e.g. "Generating history: {cumulativeAdded} snapshots...")
+   }
+   ```
+3. **Idempotency & Resumption**: If the user cancels or closes the window mid-loop, subsequent clicks safely resume where the previous chunk stopped without duplicating data.
