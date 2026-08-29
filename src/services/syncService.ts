@@ -136,24 +136,50 @@ export async function executeSync(options: ExecuteSyncOptions): Promise<SyncExec
             userId: options.userId,
           });
           const decryptedRefreshToken = decryptToken(accountRecord.refreshToken);
-          const refreshed = await adapter.refreshToken(decryptedRefreshToken);
-          accessToken = refreshed.accessToken;
+          try {
+            const refreshed = await adapter.refreshToken(decryptedRefreshToken);
+            accessToken = refreshed.accessToken;
 
-          // Persist refreshed access token (and new refresh token if rotated) to database
-          await db
-            .update(connectedAccounts)
-            .set({
-              accessToken: encryptToken(refreshed.accessToken),
-              refreshToken: refreshed.refreshToken ? encryptToken(refreshed.refreshToken) : accountRecord.refreshToken,
-              updatedAt: new Date(),
-            })
-            .where(eq(connectedAccounts.id, accountRecord.id));
+            // Persist refreshed access token (and new refresh token if rotated) to database
+            await db
+              .update(connectedAccounts)
+              .set({
+                accessToken: encryptToken(refreshed.accessToken),
+                refreshToken: refreshed.refreshToken ? encryptToken(refreshed.refreshToken) : accountRecord.refreshToken,
+                status: 'active',
+                updatedAt: new Date(),
+              })
+              .where(eq(connectedAccounts.id, accountRecord.id));
 
-          // Retry sync with the fresh access token
-          syncResult = await adapter.sync({
-            ...options,
-            accessToken,
-          });
+            // Retry sync with the fresh access token
+            syncResult = await adapter.sync({
+              ...options,
+              accessToken,
+            });
+          } catch (refreshErr: unknown) {
+            const isInvalidGrant =
+              refreshErr instanceof ExternalServiceError &&
+              (refreshErr.message.includes('invalid_grant') ||
+                refreshErr.message.includes('expired') ||
+                refreshErr.message.includes('revoked') ||
+                refreshErr.upstreamStatusCode === 400);
+
+            if (isInvalidGrant && accountRecord?.id) {
+              logger.warn('Google OAuth refresh token expired or revoked, setting status to needs_reauth', {
+                operation: 'executeSync:autoRefresh:invalidGrant',
+                userId: options.userId,
+                accountId: accountRecord.id,
+              });
+              await db
+                .update(connectedAccounts)
+                .set({
+                  status: 'needs_reauth',
+                  updatedAt: new Date(),
+                })
+                .where(eq(connectedAccounts.id, accountRecord.id));
+            }
+            throw refreshErr;
+          }
         } else {
           throw syncErr;
         }

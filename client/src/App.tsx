@@ -156,10 +156,13 @@ export const App: React.FC = () => {
     setIsSyncing(true);
     try {
       await api.triggerSync('manual');
+      await loadUserData();
       setTimeout(() => {
         setIsSyncing(false);
       }, 2000);
-    } catch {
+    } catch (err: unknown) {
+      console.error('Manual sync failed:', err);
+      await loadUserData();
       setIsSyncing(false);
     }
   };

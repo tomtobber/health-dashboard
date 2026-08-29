@@ -46,21 +46,39 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={googleStatus === 'active' ? onTriggerSync : onConnectGoogle}
               style={{
                 fontSize: '0.75rem',
-                color: googleStatus === 'active' ? '#10b981' : '#f59e0b',
+                color: googleStatus === 'active' ? '#10b981' : googleStatus === 'needs_reauth' ? '#ef4444' : '#f59e0b',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '4px',
-                background: googleStatus === 'active' ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)',
+                background: googleStatus === 'active' ? 'rgba(16,185,129,0.1)' : googleStatus === 'needs_reauth' ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.1)',
                 border: '1px solid',
-                borderColor: googleStatus === 'active' ? 'rgba(16,185,129,0.3)' : 'rgba(245,158,11,0.3)',
+                borderColor: googleStatus === 'active' ? 'rgba(16,185,129,0.3)' : googleStatus === 'needs_reauth' ? 'rgba(239,68,68,0.4)' : 'rgba(245,158,11,0.3)',
                 borderRadius: '6px',
                 padding: '2px 8px',
                 cursor: 'pointer',
               }}
-              title={googleStatus === 'active' ? 'Google Health connected (Click to sync)' : 'Click to connect Google Health'}
+              title={
+                googleStatus === 'active'
+                  ? 'Google Health connected (Click to sync)'
+                  : googleStatus === 'needs_reauth'
+                  ? 'Google token expired (Click to re-authenticate)'
+                  : 'Click to connect Google Health'
+              }
             >
-              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: googleStatus === 'active' ? '#10b981' : '#f59e0b' }}></span>
-              Google: {googleStatus === 'active' ? 'Connected' : 'Offline / Click to Connect'}
+              <span
+                style={{
+                  width: '6px',
+                  height: '6px',
+                  borderRadius: '50%',
+                  background: googleStatus === 'active' ? '#10b981' : googleStatus === 'needs_reauth' ? '#ef4444' : '#f59e0b',
+                }}
+              ></span>
+              Google:{' '}
+              {googleStatus === 'active'
+                ? 'Connected'
+                : googleStatus === 'needs_reauth'
+                ? 'Re-auth Required (Click to Reconnect)'
+                : 'Offline / Click to Connect'}
             </button>
           </div>
         </div>
