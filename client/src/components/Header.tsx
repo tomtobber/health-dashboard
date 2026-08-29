@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, PlusCircle, PenTool, RefreshCw, LogIn, LogOut, LayoutGrid } from 'lucide-react';
+import { Activity, PlusCircle, PenTool, RefreshCw, LogIn, LogOut, LayoutGrid, ScatterChart } from 'lucide-react';
 
 interface HeaderProps {
   user: { id: string; email: string } | null;
@@ -9,6 +9,7 @@ interface HeaderProps {
   onOpenDefModal: () => void;
   onAddPanel: () => void;
   onOpenBaselines?: () => void;
+  onOpenCorrelation?: () => void;
   onTriggerSync: () => void;
   onConnectGoogle?: () => void;
   isSyncing: boolean;
@@ -23,6 +24,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenDefModal,
   onAddPanel,
   onOpenBaselines,
+  onOpenCorrelation,
   onTriggerSync,
   onConnectGoogle,
   isSyncing,
@@ -82,6 +84,10 @@ export const Header: React.FC<HeaderProps> = ({
             <button className="btn btn-secondary" onClick={onOpenBaselines} title="View personal baselines">
               <Activity size={15} />
               <span>Personal Baselines</span>
+            </button>
+            <button className="btn btn-secondary" onClick={onOpenCorrelation} title="Analyze cross-metric correlation">
+              <ScatterChart size={15} />
+              <span>Analyze Correlation</span>
             </button>
             <button className="btn btn-secondary" onClick={onAddPanel}>
               <LayoutGrid size={15} />

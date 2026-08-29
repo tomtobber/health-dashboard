@@ -7,6 +7,7 @@ import {
   BaselineResult,
   TrendResult,
   BaselineConfigResult,
+  CorrelationResult,
 } from '../types';
 
 export class ApiError extends Error {
@@ -268,6 +269,17 @@ export const api = {
     return request<BaselineResult>(`/api/metrics/${encodeURIComponent(metricType)}/baseline${query}`);
   },
 
+
+  async getCorrelation(metricTypeA: string, metricTypeB: string, windowDays?: number): Promise<CorrelationResult> {
+    const params = new URLSearchParams({
+      metricTypeA,
+      metricTypeB,
+    });
+    if (windowDays !== undefined) {
+      params.append('windowDays', windowDays.toString());
+    }
+    return request<CorrelationResult>(`/api/metrics/correlation?${params.toString()}`);
+  },
   async getTrend(metricType: string, windowDays?: number): Promise<TrendResult> {
     const query = windowDays ? `?windowDays=${windowDays}` : '';
     return request<TrendResult>(`/api/metrics/${encodeURIComponent(metricType)}/trend${query}`);

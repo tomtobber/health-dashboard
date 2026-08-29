@@ -1,3 +1,4 @@
+import { bucketToDailyMeans } from '../utils/dailyBucketing';
 import { z } from 'zod';
 import { db } from '../db';
 import { metricBaselineConfigs } from '../db/schema';
@@ -80,7 +81,7 @@ function round2(val: number): number {
   return Object.is(res, -0) ? 0 : res;
 }
 
-function round3(val: number): number {
+export function round3(val: number): number {
   const res = Math.round((val + Number.EPSILON) * 1000) / 1000;
   return Object.is(res, -0) ? 0 : res;
 }
@@ -259,18 +260,8 @@ export async function getMetricTrend(
     );
   }
 
-  const dayBuckets = new Map<string, number[]>();
-  for (const entry of enriched.entries) {
-    if (typeof entry.valueNumeric === 'number' && !isNaN(entry.valueNumeric)) {
-      const entryDate = new Date(entry.startTime);
-      const dayKey = entryDate.toISOString().slice(0, 10);
-      const list = dayBuckets.get(dayKey) || [];
-      list.push(entry.valueNumeric);
-      dayBuckets.set(dayKey, list);
-    }
-  }
-
-  const sampleSize = dayBuckets.size;
+  const dailyMeans = bucketToDailyMeans(enriched.entries);
+  const sampleSize = dailyMeans.size;
 
   if (sampleSize < MIN_TREND_SAMPLE_SIZE) {
     return {
@@ -284,17 +275,15 @@ export async function getMetricTrend(
     };
   }
 
-  const sortedDays = Array.from(dayBuckets.keys()).sort();
+  const sortedDays = Array.from(dailyMeans.keys()).sort();
   const windowStartMs = startTime.getTime();
   const points: { x: number; y: number }[] = [];
 
   for (const dayKey of sortedDays) {
-    const vals = dayBuckets.get(dayKey);
-    if (!vals || vals.length === 0) continue;
-    const dayMean = vals.reduce((acc, v) => acc + v, 0) / vals.length;
-    const dayUtcMs = Date.parse(`${dayKey}T00:00:00.000Z`);
-    const daysFromStart = (dayUtcMs - windowStartMs) / 86400000;
-    points.push({ x: daysFromStart, y: dayMean });
+    const d = dailyMeans.get(dayKey);
+    if (!d) continue;
+    const daysFromStart = (d.dateUtcMs - windowStartMs) / 86400000;
+    points.push({ x: daysFromStart, y: d.mean });
   }
 
   const N = points.length;

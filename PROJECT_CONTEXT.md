@@ -116,12 +116,12 @@ A personal (initially single/small-user) web application that aggregates health 
 | 3. Custom metrics | complete | `phases/phase3-detail.md` |
 | 4. Other integrations | deferred indefinitely | see `DECISIONS.md` |
 | 5. Customizable charts | complete | `phases/phase5-detail.md` |
-| 6. Conclusions / insights | active | `phases/phase6-detail.md` |
+| 6. Conclusions / insights | complete | `phases/phase6-detail.md` |
 
 Phase 6 currently contains:
-- Personal baselines: complete.
-- Trend detection: second slice complete.
-- Correlation between user-chosen metric pairs: later slice, not yet implemented.
+- Personal baselines: complete (Slice 1).
+- Trend detection: complete (Slice 2).
+- Correlation between user-chosen metric pairs: complete (Slice 3).
 
 ## Architecture Principles — Hard Invariants
 
@@ -237,16 +237,15 @@ Detailed contract/API: `phases/phase3-detail.md`.
 
 Detailed contract/API/UI: `phases/phase5-detail.md`.
 
-## Phase 6 — Current Feature State
+### Phase 6 — Conclusions / insights
 
-### Personal baselines — complete
-
+#### Personal baselines
 - Mean, standard deviation, min, max, sample size.
 - Numeric/duration only; boolean/category requests are validation errors.
 - Computed live from the canonical enriched reconciled read path.
 - Default window: 90 days.
 - Minimum sample size: 10.
-- Fewer than 10 entries returns an explicit `insufficient_data` result.
+- Fewer than 10 entries returns an explicit `insufficient_data` result (includes resolved `windowDays`).
 - Per-user/per-metric window config lives in `metric_baseline_configs`.
 - Config is intentionally not FK-linked to metric definitions so it may outlive a deleted custom metric.
 - `GET /api/metrics/:metricType/baseline`
@@ -255,20 +254,29 @@ Detailed contract/API/UI: `phases/phase5-detail.md`.
 - Exact approved UI copy is in `phases/phase6-detail.md`.
 - Never use population-referenced/evaluative language such as "normal", "healthy", "abnormal", "target", "goal", "good", or "bad".
 
-### Trend detection — second slice complete
-
+#### Trend detection
 - Single numeric/duration metric.
 - Reuses the Personal Baseline window config.
 - Ordinary least-squares regression of value against time.
 - Entries are bucketed to one mean per UTC calendar day before regression.
 - Regression x is actual calendar days since window start, not sequential rank.
 - Requires at least 10 distinct daily buckets.
-- Pearson `r` gates directional labeling.
-- Default `TREND_CORRELATION_THRESHOLD = 0.3`.
+- Pearson `r` gates directional labeling (`TREND_CORRELATION_THRESHOLD = 0.3`).
 - Labels: `increasing`, `decreasing`, `no_clear_trend`.
 - `GET /api/metrics/:metricType/trend`
 - Uses the same `metric_baseline_configs` endpoint for window configuration.
-- Exact implementation detail is in `phases/phase6-detail.md`.
+
+#### Cross-metric correlation
+- Pairwise numeric/duration metrics only; boolean/category requests are validation errors.
+- Same-metric pairs rejected.
+- Computed from `queryBatchEnrichedMetrics`, aligned by UTC calendar day (inner join).
+- Minimum sample size: 10 aligned days.
+- Binary significance gate: `|r| >= CORRELATION_SIGNIFICANCE_THRESHOLD` (0.3) -> `hasClearCorrelation`.
+- Zero-variance guard: `Sxx == 0 || Syy == 0` maps to `r = 0` and `hasClearCorrelation = false`.
+- No persisted pairwise config; `windowDays` is a per-request override only, default 90.
+- `GET /api/metrics/correlation`
+
+Detailed contract/API/UI: `phases/phase6-detail.md`.
 
 ## Data Volume / Resolution
 

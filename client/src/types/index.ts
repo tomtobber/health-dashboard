@@ -120,3 +120,38 @@ export type TrendResult =
 export type BaselineConfigResult =
   | { configured: true; metricType: string; windowDays: number }
   | { configured: false; metricType: string; default: number };
+
+export interface PairedDailyAveragePoint {
+  day: string; // YYYY-MM-DD
+  valueA: number;
+  valueB: number;
+}
+
+export type CorrelationResult =
+  | {
+      ok: true;
+      metricTypeA: string;
+      metricTypeB: string;
+      displayNameA: string;
+      displayNameB: string;
+      unitA?: string;
+      unitB?: string;
+      windowDays: number;
+      windowStart: string;
+      windowEnd: string;
+      sampleSize: number;
+      correlationCoefficient: number;
+      hasClearCorrelation: boolean;
+      pairedDailyAverages: PairedDailyAveragePoint[];
+    }
+  | {
+      ok: false;
+      reason: 'insufficient_data';
+      metricTypeA: string;
+      metricTypeB: string;
+      displayNameA: string;
+      displayNameB: string;
+      windowDays: number;
+      sampleSize: number;
+      minRequired: number;
+    };

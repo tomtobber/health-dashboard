@@ -6,6 +6,7 @@ import { PanelConfigModal } from './components/PanelConfigModal';
 import { ManualEntryModal } from './components/ManualEntryModal';
 import { MetricDefinitionModal } from './components/MetricDefinitionModal';
 import { BaselineModal } from './components/BaselineModal';
+import { CorrelationModal } from './components/CorrelationModal';
 import { AuthModal } from './components/AuthModal';
 import {
   DashboardView,
@@ -47,6 +48,7 @@ export const App: React.FC = () => {
   const [isDefOpen, setIsDefOpen] = useState(false);
   const [editingPanel, setEditingPanel] = useState<DashboardPanelConfig | null | 'new'>(null);
   const [baselineModalMetric, setBaselineModalMetric] = useState<{ metricType: string; displayName?: string } | null>(null);
+  const [correlationModalMetrics, setCorrelationModalMetrics] = useState<{ metricTypeA?: string; metricTypeB?: string } | null>(null);
 
   // Initialize app
   const initApp = async () => {
@@ -186,6 +188,7 @@ export const App: React.FC = () => {
         onOpenDefModal={() => setIsDefOpen(true)}
         onAddPanel={() => setEditingPanel('new')}
         onOpenBaselines={() => setBaselineModalMetric({ metricType: 'heart-rate', displayName: 'Heart Rate' })}
+        onOpenCorrelation={() => setCorrelationModalMetrics({})}
         onTriggerSync={handleTriggerSync}
         isSyncing={isSyncing}
         googleStatus={googleStatus}
@@ -269,6 +272,14 @@ export const App: React.FC = () => {
           metricType={baselineModalMetric.metricType}
           metricDisplayName={baselineModalMetric.displayName}
           onClose={() => setBaselineModalMetric(null)}
+        />
+      )}
+
+      {correlationModalMetrics && (
+        <CorrelationModal
+          initialMetricTypeA={correlationModalMetrics.metricTypeA}
+          initialMetricTypeB={correlationModalMetrics.metricTypeB}
+          onClose={() => setCorrelationModalMetrics(null)}
         />
       )}
 

@@ -9,7 +9,7 @@ The system may describe patterns in the user's own data but must not make diagno
 Current slices:
 1. Personal baselines — complete
 2. Trend detection — complete
-3. Correlation between user-chosen metric pairs — later, not implemented
+3. Correlation between user-chosen metric pairs — complete
 
 Causal or prescriptive claims, if ever considered, require established physiology/sports-science methods and must remain clearly distinguished from observations in the user's data.
 
@@ -331,15 +331,100 @@ The exact UI copy was reviewed against Architecture Principle 6 before shipping:
 
 Both `BaselineResult` and `TrendResult` include `windowDays` on their `ok: false` insufficient-data branches. This is covered by service-level and HTTP-level tests. Insufficient-data notices source the window from the API response rather than local UI input state, preventing an unsaved edit to the window field from desynchronizing the displayed message from the window actually used for the failed response.
 
-## Later Phase 6 Slice — Cross-Metric Correlation
+## Cross-Metric Correlation — Complete
 
-Not implemented yet.
+Descriptive Pearson correlation between two user-chosen numeric/duration metrics over a historical window, using daily UTC means aligned by day. Strictly descriptive — no causal, diagnostic, or magnitude-judgment language.
 
-It is separate from the Pearson `r` used internally for trend fit quality.
+### Validation
 
-When implemented, preserve:
-- descriptive/correlational framing
-- no causal claims
-- no prescriptive/diagnostic language
-- explicit guardrails
-- canonical reconciled-preferred read path
+- `metricTypeA !== metricTypeB` — reject identical metrics as `ValidationError`.
+- Both metrics must resolve to `valueType` `numeric` or `duration` — reject boolean/category as `ValidationError`, matching baseline/trend.
+- `windowDays` validated with the existing `BaselineWindowSchema` (7–3650), not a new schema.
+
+### Data Source & Bucketing
+
+1. Fetch both metrics via `queryBatchEnrichedMetrics` for the resolved window (canonical path — no new SQL aggregation, no reimplemented raw-vs-reconciled precedence).
+2. Uses the shared UTC daily-bucketing helper `bucketToDailyMeans(entries)`.
+3. Compute one daily mean per UTC calendar day for each metric independently.
+4. Align by day: keep only days present in **both** daily-mean maps (inner join: `D = D_A ∩ D_B`).
+
+### Sample Size Gate
+
+- `sampleSize = |D|` (count of aligned days).
+- `MIN_CORRELATION_SAMPLE_SIZE = 10` — its own named constant.
+- Fewer than the minimum → `insufficient_data`, matching the baseline/trend discriminated-union pattern, including `windowDays` on the failure branch.
+
+### Pearson r & Zero-Variance Guard
+
+- Compute means, `Sxx`, `Syy`, `Sxy` over the aligned daily pairs.
+- If `Sxx == 0` or `Syy == 0` (no variance in one series), set `r = 0`. Documented as a deliberate convention matching the `-0 → 0` normalization.
+- Otherwise `r = Sxy / sqrt(Sxx * Syy)`, clamped to `[-1, 1]`.
+- Round to 3 decimal places with `round3`, with `-0` normalized to `0`.
+
+### Directional Significance Gate
+
+Binary pattern matching trend detection rather than an evaluative magnitude taxonomy:
+`CORRELATION_SIGNIFICANCE_THRESHOLD = 0.3`
+- If `|r| >= CORRELATION_SIGNIFICANCE_THRESHOLD` → `hasClearCorrelation: true`
+- Otherwise → `hasClearCorrelation: false`
+
+The response always includes the raw `correlationCoefficient` regardless of this flag. No "strong"/"moderate"/"weak" labels anywhere in the type or the UI.
+
+### Result Type
+
+```ts
+export type CorrelationResult =
+  | {
+      ok: true;
+      metricTypeA: string;
+      metricTypeB: string;
+      displayNameA: string;
+      displayNameB: string;
+      unitA?: string;
+      unitB?: string;
+      windowDays: number;
+      windowStart: string;
+      windowEnd: string;
+      sampleSize: number; // count of aligned UTC calendar days
+      correlationCoefficient: number; // Pearson r, round3, -0 -> 0
+      hasClearCorrelation: boolean; // |r| >= CORRELATION_SIGNIFICANCE_THRESHOLD
+      pairedDailyAverages: Array<{
+        day: string; // YYYY-MM-DD
+        valueA: number;
+        valueB: number;
+      }>;
+    }
+  | {
+      ok: false;
+      reason: 'insufficient_data';
+      metricTypeA: string;
+      metricTypeB: string;
+      displayNameA: string;
+      displayNameB: string;
+      windowDays: number;
+      sampleSize: number;
+      minRequired: number;
+    };
+```
+
+### API
+
+`GET /api/metrics/correlation?metricTypeA=...&metricTypeB=...&windowDays=...`
+
+- Auth via `authenticateToken`.
+- `windowDays` optional, uses `BaselineWindowSchema`, does not persist.
+- No new pairwise config table.
+
+### UI Copy — Implemented
+
+| UI element | Exact copy |
+|---|---|
+| Header nav button | `Analyze Correlation` |
+| MultiMetricPanel action (2+ numeric/duration metrics overlaid) | `Analyze Correlation` |
+| Modal title | `Correlation: {displayNameA} vs {displayNameB}` |
+| Summary (clear correlation) | `Correlation between {displayNameA} and {displayNameB}: r = {correlationCoefficient} (n = {sampleSize} paired days over last {windowDays} days).` |
+| Summary (no clear correlation) | `No clear correlation found between {displayNameA} and {displayNameB} (r = {correlationCoefficient}, n = {sampleSize} paired days over last {windowDays} days).` |
+| Insufficient-data notice | `Insufficient paired data to compute correlation between {displayNameA} and {displayNameB}. Found {sampleSize} days where both metrics were recorded in the last {windowDays} days (minimum required: {minRequired}).` |
+| Methodology footer (always shown) | `Correlation describes statistical association in your trailing data and does not imply causation.` |
+
+Forbidden language: same list as baseline/trend (`normal`, `healthy`, `abnormal`, `target`, `goal`, `good`, `bad`) plus no magnitude-judgment words (`strong`, `moderate`, `weak`).

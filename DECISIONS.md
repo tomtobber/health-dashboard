@@ -363,3 +363,21 @@ The trend/baseline insufficient-data responses explicitly include `windowDays`, 
 ### Trend display precision and framing
 
 Directional Trend uses 3-decimal rounding for `slopePerDay` and `correlationCoefficient`, with negative zero normalized to zero. This is deliberately different from baseline statistics' 2-decimal rounding because small daily rate changes need the additional precision. The exact directional UI copy was reviewed before shipping to enforce the non-evaluative framing principle.
+
+## Phase 6 — Conclusions / Insights
+
+### Why a binary significance gate was used instead of a magnitude scale
+
+Labels like "strong", "moderate", or "weak" correlation introduce subjective magnitude judgments about a relationship's importance. In alignment with Architecture Principle 6 ("descriptive only, never diagnostic or prescriptive"), cross-metric correlation uses a single binary significance threshold (`CORRELATION_SIGNIFICANCE_THRESHOLD = 0.3` -> `hasClearCorrelation: boolean`) matching the gate used in trend detection. The exact numerical Pearson `r` is always presented transparently without value judgments.
+
+### Why inner-join alignment was chosen over imputation
+
+Health metrics vary substantially in sampling frequency and user logging habits (e.g. daily resting heart rate vs manual weight logging). Imputing or interpolating missing daily values creates synthetic statistical relationships that do not exist in the user's observed data. An inner join on UTC calendar days (`D = D_A ∩ D_B`) guarantees that every paired point represents a day on which both metrics were genuinely recorded.
+
+### Why zero-variance maps to r = 0 rather than an error or null
+
+If all daily-mean values for one metric across the historical window are identical (e.g. `Syy == 0`), mathematical Pearson correlation yields `0 / 0 = NaN`. Rather than surfacing an unexpected error or displaying a broken value, the system defensively sets `r = 0` and classifies the relationship as `hasClearCorrelation: false`. This matches the `-0 → 0` rounding normalization and avoids treating a stable metric as an exceptional system failure.
+
+### Why no pairwise config table was introduced
+
+Unlike single-metric personal baselines (which represent an individual metric's historical normal range and are configured per metric), cross-metric correlation is an exploratory analytical query between any arbitrary pair of metrics. Storing a pairwise configuration matrix (`O(M^2)`) in the database would introduce excessive schema complexity without clear utility. Instead, the endpoint accepts an optional, validated `windowDays` query parameter that defaults to the standard 90-day window.

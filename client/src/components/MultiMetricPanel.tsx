@@ -41,7 +41,7 @@ import {
   CartesianGrid,
   } from 'recharts';
 import { format, parseISO, subDays, subHours, subYears } from 'date-fns';
-import { Settings, Trash2, AlertCircle, RefreshCw, TrendingUp } from 'lucide-react';
+import { Settings, Trash2, AlertCircle, RefreshCw, TrendingUp, ScatterChart } from 'lucide-react';
 
 
 interface MultiMetricPanelProps {
@@ -53,6 +53,7 @@ interface MultiMetricPanelProps {
   onSeedDemo?: () => void;
   onOpenLog?: () => void;
   onOpenBaseline?: (metricType: string, displayName?: string) => void;
+  onOpenCorrelation?: (metricTypeA: string, metricTypeB: string) => void;
 }
 
 const SERIES_COLORS = [
@@ -66,7 +67,7 @@ const SERIES_COLORS = [
   '#14b8a6', // Teal
 ];
 
-export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user, onEdit, onRemove, onOpenAuth, onSeedDemo, onOpenLog, onOpenBaseline }) => {
+export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user, onEdit, onRemove, onOpenAuth, onSeedDemo, onOpenLog, onOpenBaseline, onOpenCorrelation }) => {
   const [data, setData] = useState<EnrichedMetricQueryResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -259,6 +260,18 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginRight: '0.25rem' }}>
             {formattedRangeLabel}
           </span>
+          {onOpenCorrelation && data.filter(d => d.valueType === 'numeric' || d.valueType === 'duration').length >= 2 && (
+            <button
+              className="btn btn-secondary btn-icon"
+              onClick={() => {
+                const num = data.filter(d => d.valueType === 'numeric' || d.valueType === 'duration');
+                onOpenCorrelation(num[0].metricType, num[1].metricType);
+              }}
+              title="Analyze Correlation"
+            >
+              <ScatterChart size={14} />
+            </button>
+          )}
           <button className="btn btn-secondary btn-icon" onClick={fetchData} title="Refresh panel data">
             <RefreshCw size={14} className={loading ? 'spin-anim' : ''} />
           </button>
