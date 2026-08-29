@@ -211,6 +211,105 @@ describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
       expect(summary.hasMore).toBe(true);
       expect(summary.snapshotsAdded).toBe(0);
     });
+
+    test('gap month with insufficient data leaves no row while surrounding months succeed', async () => {
+      // Define a separate metric for gap testing
+      await db.insert(metricDefinitions).values({
+        userId: testUserId,
+        metricType: 'hydration-test-liters',
+        displayName: 'Hydration Test',
+        valueType: 'numeric',
+        unit: 'L',
+      });
+
+      // Insert 12 entries in Jan 2025
+      const janPoints = [];
+      for (let i = 1; i <= 12; i++) {
+        janPoints.push({
+          userId: testUserId,
+          provider: 'manual',
+          metricType: 'hydration-test-liters',
+          startTime: new Date(`2025-01-${i.toString().padStart(2, '0')}T10:00:00.000Z`),
+          endTime: new Date(`2025-01-${i.toString().padStart(2, '0')}T10:00:00.000Z`),
+          valueNumeric: 2.5,
+        });
+      }
+      // Insert only 2 entries in May 2025 (months March, April, May, June have gap)
+      // For asOf = 2025-07-01 (window April-June), only 2 entries exist -> insufficient (< 10)
+      const mayPoints = [
+        {
+          userId: testUserId,
+          provider: 'manual',
+          metricType: 'hydration-test-liters',
+          startTime: new Date('2025-05-10T10:00:00.000Z'),
+          endTime: new Date('2025-05-10T10:00:00.000Z'),
+          valueNumeric: 2.0,
+        },
+        {
+          userId: testUserId,
+          provider: 'manual',
+          metricType: 'hydration-test-liters',
+          startTime: new Date('2025-05-11T10:00:00.000Z'),
+          endTime: new Date('2025-05-11T10:00:00.000Z'),
+          valueNumeric: 2.0,
+        },
+      ];
+
+      await db.insert(metricEntries).values([...janPoints, ...mayPoints]);
+
+      const fixedNow = new Date('2025-08-15T00:00:00.000Z');
+      const summary = await refreshBaselineHistory(testUserId, { now: fixedNow });
+
+      expect(summary.snapshotsSkippedInsufficientData).toBeGreaterThan(0);
+
+      const history = await getMetricBaselineHistory(testUserId, 'hydration-test-liters');
+      
+      // 2025-02-01 (window Nov 2024 - Jan 2025) has Jan 12 points -> succeeded
+      expect(history.some((h) => h.computedAt.startsWith('2025-02-01'))).toBe(true);
+
+      // 2025-07-01 (window April 2025 - June 2025) has only 2 May points -> NO row
+      expect(history.some((h) => h.computedAt.startsWith('2025-07-01'))).toBe(false);
+    });
+
+    test('simulated concurrent double-refresh safely exercises unique constraint with ON CONFLICT DO NOTHING', async () => {
+      // Define a fresh metric
+      await db.insert(metricDefinitions).values({
+        userId: testUserId,
+        metricType: 'concurrent-test-metric',
+        displayName: 'Concurrent Test',
+        valueType: 'numeric',
+      });
+
+      const points = [];
+      for (let i = 1; i <= 15; i++) {
+        points.push({
+          userId: testUserId,
+          provider: 'manual',
+          metricType: 'concurrent-test-metric',
+          startTime: new Date(`2026-01-${i.toString().padStart(2, '0')}T10:00:00.000Z`),
+          endTime: new Date(`2026-01-${i.toString().padStart(2, '0')}T10:00:00.000Z`),
+          valueNumeric: 100 + i,
+        });
+      }
+      await db.insert(metricEntries).values(points);
+
+      const fixedNow = new Date('2026-03-20T00:00:00.000Z');
+
+      // Run two parallel refreshes concurrently
+      const [res1, res2] = await Promise.all([
+        refreshBaselineHistory(testUserId, { now: fixedNow }),
+        refreshBaselineHistory(testUserId, { now: fixedNow }),
+      ]);
+
+      // Both should succeed without throwing unique constraint error
+      expect(res1.snapshotsAdded + res2.snapshotsAdded).toBeGreaterThanOrEqual(1);
+
+      // Check that the database contains strictly unique rows
+      const history = await getMetricBaselineHistory(testUserId, 'concurrent-test-metric');
+      const computedAtSet = new Set(history.map((h) => h.computedAt));
+      expect(computedAtSet.size).toBe(history.length);
+    });
+
   });
 
   describe('4. getMetricBaselineHistory query', () => {
