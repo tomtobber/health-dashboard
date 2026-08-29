@@ -559,6 +559,106 @@ principle.
 action) and `MultiMetricPanel.tsx` (per-series "View Historical
 Baseline" action), both opening `BaselineModal.tsx`.
 
+## Trend Detection (phase 6 — second slice complete)
+
+The second slice of "Conclusions / insights": a directional read
+("increasing" / "decreasing" / "no clear trend") for a single
+numeric/duration metric, computed over the *same* window already
+configured for that metric's Personal Baseline. No new config table —
+this intentionally reuses `metric_baseline_configs`. The table name is
+now a slight misnomer (it backs two features, not just baselines); worth
+a rename in a later pass, but not disruptive enough to justify a
+migration right now. Document it here so it isn't mysterious later.
+
+**Method: ordinary least-squares linear regression of value against
+time**, computed over entries from `queryEnrichedMetricEntries` for the
+resolved window (Principle 7 — same reconciled read path as baselines,
+no new SQL aggregation path).
+
+**Daily bucketing happens in application code before regression.**
+Entries are grouped into one mean value per UTC calendar day — same
+UTC-day convention already established for `daily_avg`
+(`date_trunc('day', ...)` with no timezone conversion) — so this doesn't
+invent a third, inconsistent notion of "day" alongside the two that
+already exist in the codebase. The regression's `x` value is the actual
+number of days since the window start (real calendar distance), not a
+sequential rank index — this matters because gap days (no data) must not
+compress the slope's time units. Days with multiple entries are averaged
+before the day is used as a single point.
+
+**Direction is gated by fit quality, not just slope sign.** The
+regression also yields a Pearson correlation coefficient `r` (how
+linear the data actually is over time — a single-metric fit-quality
+measure, *not* correlation between two different metrics, which is the
+separate, later Phase 6 slice with its own guardrails). Only when
+`|r| >= TREND_CORRELATION_THRESHOLD` (default `0.3`, named constant) is
+the result labeled `'increasing'` or `'decreasing'`; otherwise it's
+`'no_clear_trend'`, regardless of slope sign. This exists so a single
+noisy blip can't be reported as a trend.
+
+**Minimum sample size**: `MIN_TREND_SAMPLE_SIZE`, defaulted to `10`
+distinct daily-bucketed points — a separate named constant from
+`MIN_BASELINE_SAMPLE_SIZE` even though it starts at the same value,
+since the two concepts (a stable mean vs. a fittable line) may need to
+diverge later.
+
+```ts
+type TrendResult =
+  | { ok: true; metricType: string; displayName: string; unit?: string;
+      windowDays: number; windowStart: string; windowEnd: string;
+      sampleSize: number; direction: 'increasing' | 'decreasing' | 'no_clear_trend';
+      slopePerDay: number; correlationCoefficient: number }
+  | { ok: false; reason: 'insufficient_data'; metricType: string;
+      displayName: string; windowDays: number; sampleSize: number;
+      minRequired: number };
+```
+
+**Restricted to `numeric`/`duration` metrics**, same `ValidationError`
+posture as baselines — no silent empty result for boolean/category.
+
+**API surface**:
+- `GET /api/metrics/:metricType/trend` — resolves the window from the
+  same `metric_baseline_configs` lookup baselines use (saved config, or
+  the 90-day default). Optional `?windowDays=` override, validated
+  through the same shared `BaselineWindowSchema`, does not persist.
+- No separate config endpoints — `PUT /api/metrics/:metricType/baseline-config`
+  now governs both features for that metric. This needs to be stated
+  plainly in whatever UI exposes the window setting, so changing it
+  doesn't read as baseline-only when it also reshapes the trend.
+
+**Framing (Architecture Principle 6) — implemented, exact copy reviewed
+against the principle before shipping:**
+
+| UI element | Exact copy |
+|---|---|
+| Section header | "Directional Trend" |
+| Increasing | ```Trend: Increasing (+${slopePerDay} ${unit}/day over last ${windowDays} days, n=${sampleSize} days)``` |
+| Decreasing | ```Trend: Decreasing (${slopePerDay} ${unit}/day over last ${windowDays} days, n=${sampleSize} days)``` |
+| No clear trend | ```Trend: No clear trend over last ${windowDays} days (n=${sampleSize} days)``` |
+| Insufficient-data notice | ```Insufficient data to determine a trend for ${displayName}. Found ${sampleSize} days with data in the last ${windowDays} days (minimum required: ${minRequired}).``` |
+| Window config helper | "Calculated over your trailing history up to right now. Governs both Personal Baseline and Directional Trend." |
+
+`slopePerDay` is only prefixed with `+` on the increasing branch — it
+already carries its own sign when negative, so the decreasing branch
+doesn't double up a minus sign. No "improving," "worsening," "getting
+better/worse," or other evaluative framing anywhere in the feature,
+same standard as baselines.
+
+**Rounding**: `slopePerDay` and `correlationCoefficient` are both
+rounded to 3 decimal places (`round3`, with `-0` mapped to `0` to avoid
+a confusing negative-zero display), distinct from baseline stats'
+2-decimal rounding — a deliberate choice, not an inconsistency, since 3
+decimals preserves precision for metrics with small daily rate changes
+(e.g. `+0.025 kg/day`).
+
+**`windowDays` is present on both `ok: false` branches** (`BaselineResult`
+and `TrendResult`), confirmed by both service-level and HTTP-level
+tests. The insufficient-data notices read this directly from the API
+response, not from local UI input state — an earlier draft used the
+input field's live value instead, which could desync from the window a
+given failed response actually used (e.g. an unsaved edit to the window
+field). Both features now source it from the response only.
+
 ## Data Volume & Resolution Strategy
 
 Some data types (heart rate confirmed; potentially others at similar

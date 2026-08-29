@@ -154,6 +154,7 @@ describe('Phase 6 - Personal Baselines HTTP Routes', () => {
         reason: 'insufficient_data',
         metricType: 'daily-stretch-minutes',
         displayName: 'Daily Stretching',
+        windowDays: 90,
         sampleSize: 3,
         minRequired: 10,
       });

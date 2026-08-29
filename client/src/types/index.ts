@@ -88,6 +88,31 @@ export type BaselineResult =
       reason: 'insufficient_data';
       metricType: string;
       displayName: string;
+      windowDays: number;
+      sampleSize: number;
+      minRequired: number;
+    };
+
+export type TrendResult =
+  | {
+      ok: true;
+      metricType: string;
+      displayName: string;
+      unit?: string;
+      windowDays: number;
+      windowStart: string;
+      windowEnd: string;
+      sampleSize: number;
+      direction: 'increasing' | 'decreasing' | 'no_clear_trend';
+      slopePerDay: number;
+      correlationCoefficient: number;
+    }
+  | {
+      ok: false;
+      reason: 'insufficient_data';
+      metricType: string;
+      displayName: string;
+      windowDays: number;
       sampleSize: number;
       minRequired: number;
     };

@@ -11,6 +11,9 @@ export const MIN_BASELINE_SAMPLE_SIZE = 10;
 export const MIN_BASELINE_WINDOW_DAYS = 7;
 export const MAX_BASELINE_WINDOW_DAYS = 3650;
 
+export const MIN_TREND_SAMPLE_SIZE = 10;
+export const TREND_CORRELATION_THRESHOLD = 0.3;
+
 export const BaselineWindowSchema = z.object({
   windowDays: z.coerce.number().int().min(MIN_BASELINE_WINDOW_DAYS, {
     message: `windowDays must be at least ${MIN_BASELINE_WINDOW_DAYS}`,
@@ -39,6 +42,31 @@ export type BaselineResult =
       reason: 'insufficient_data';
       metricType: string;
       displayName: string;
+      windowDays: number;
+      sampleSize: number;
+      minRequired: number;
+    };
+
+export type TrendResult =
+  | {
+      ok: true;
+      metricType: string;
+      displayName: string;
+      unit?: string;
+      windowDays: number;
+      windowStart: string;
+      windowEnd: string;
+      sampleSize: number;
+      direction: 'increasing' | 'decreasing' | 'no_clear_trend';
+      slopePerDay: number;
+      correlationCoefficient: number;
+    }
+  | {
+      ok: false;
+      reason: 'insufficient_data';
+      metricType: string;
+      displayName: string;
+      windowDays: number;
       sampleSize: number;
       minRequired: number;
     };
@@ -48,18 +76,15 @@ export type BaselineConfigResult =
   | { configured: false; metricType: string; default: number };
 
 function round2(val: number): number {
-  return Math.round((val + Number.EPSILON) * 100) / 100;
+  const res = Math.round((val + Number.EPSILON) * 100) / 100;
+  return Object.is(res, -0) ? 0 : res;
 }
 
-/**
- * Retrieve personal baseline statistics for a numeric or duration metric over a rolling window.
- *
- * Decisions:
- * 1. Rolling trailing window (now - windowDays to now) reflects the user's historical state
- *    continuously up to right now, without calendar boundary lag.
- * 2. Sample standard deviation uses Bessel's correction (N - 1) because the recorded entries
- *    are a sample of the user's ongoing physiological state, providing an unbiased estimator.
- */
+function round3(val: number): number {
+  const res = Math.round((val + Number.EPSILON) * 1000) / 1000;
+  return Object.is(res, -0) ? 0 : res;
+}
+
 export async function getMetricBaseline(
   userId: string,
   metricType: string,
@@ -137,6 +162,7 @@ export async function getMetricBaseline(
       reason: 'insufficient_data',
       metricType: enriched.metricType,
       displayName: enriched.displayName,
+      windowDays,
       sampleSize: values.length,
       minRequired: MIN_BASELINE_SAMPLE_SIZE,
     };
@@ -146,7 +172,6 @@ export async function getMetricBaseline(
   const sum = values.reduce((acc, val) => acc + val, 0);
   const mean = sum / sampleSize;
 
-  // Sample standard deviation with Bessel's correction (N - 1)
   const sumSquaredDiff = values.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0);
   const variance = sumSquaredDiff / (sampleSize - 1);
   const stddev = Math.sqrt(variance);
@@ -170,9 +195,161 @@ export async function getMetricBaseline(
   };
 }
 
-/**
- * Retrieve saved baseline window configuration for a given metric, or default (90 days).
- */
+export async function getMetricTrend(
+  userId: string,
+  metricType: string,
+  windowDaysOverride?: number
+): Promise<TrendResult> {
+  let windowDays = DEFAULT_BASELINE_WINDOW_DAYS;
+
+  if (windowDaysOverride !== undefined) {
+    const parsed = BaselineWindowSchema.parse({ windowDays: windowDaysOverride });
+    windowDays = parsed.windowDays;
+  } else {
+    try {
+      const configRows = await db
+        .select()
+        .from(metricBaselineConfigs)
+        .where(
+          and(
+            eq(metricBaselineConfigs.userId, userId),
+            eq(metricBaselineConfigs.metricType, metricType)
+          )
+        )
+        .limit(1);
+
+      if (configRows.length > 0 && configRows[0]) {
+        windowDays = configRows[0].windowDays;
+      }
+    } catch (err: unknown) {
+      logger.error('Failed to query metric baseline config for trend', {
+        operation: 'getMetricTrend',
+        userId,
+        metricType,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw new DatabaseError(
+        'Failed to query metric baseline configuration for trend',
+        { operation: 'getMetricTrend', userId, metricType },
+        err
+      );
+    }
+  }
+
+  const now = new Date();
+  const startTime = new Date(now.getTime() - windowDays * 86400000);
+  const endTime = now;
+
+  const enriched = await queryEnrichedMetricEntries({
+    userId,
+    metricType,
+    startTime,
+    endTime,
+  });
+
+  if (enriched.valueType !== 'numeric' && enriched.valueType !== 'duration') {
+    throw new ValidationError(
+      `Trend computation is only supported for numeric or duration metrics, received '${enriched.valueType}'`,
+      {
+        operation: 'getMetricTrend',
+        userId,
+        metricType,
+        valueType: enriched.valueType,
+      }
+    );
+  }
+
+  const dayBuckets = new Map<string, number[]>();
+  for (const entry of enriched.entries) {
+    if (typeof entry.valueNumeric === 'number' && !isNaN(entry.valueNumeric)) {
+      const entryDate = new Date(entry.startTime);
+      const dayKey = entryDate.toISOString().slice(0, 10);
+      const list = dayBuckets.get(dayKey) || [];
+      list.push(entry.valueNumeric);
+      dayBuckets.set(dayKey, list);
+    }
+  }
+
+  const sampleSize = dayBuckets.size;
+
+  if (sampleSize < MIN_TREND_SAMPLE_SIZE) {
+    return {
+      ok: false,
+      reason: 'insufficient_data',
+      metricType: enriched.metricType,
+      displayName: enriched.displayName,
+      windowDays,
+      sampleSize,
+      minRequired: MIN_TREND_SAMPLE_SIZE,
+    };
+  }
+
+  const sortedDays = Array.from(dayBuckets.keys()).sort();
+  const windowStartMs = startTime.getTime();
+  const points: { x: number; y: number }[] = [];
+
+  for (const dayKey of sortedDays) {
+    const vals = dayBuckets.get(dayKey);
+    if (!vals || vals.length === 0) continue;
+    const dayMean = vals.reduce((acc, v) => acc + v, 0) / vals.length;
+    const dayUtcMs = Date.parse(`${dayKey}T00:00:00.000Z`);
+    const daysFromStart = (dayUtcMs - windowStartMs) / 86400000;
+    points.push({ x: daysFromStart, y: dayMean });
+  }
+
+  const N = points.length;
+  let sumX = 0;
+  let sumY = 0;
+  for (const p of points) {
+    sumX += p.x;
+    sumY += p.y;
+  }
+  const meanX = sumX / N;
+  const meanY = sumY / N;
+
+  let Sxx = 0;
+  let Syy = 0;
+  let Sxy = 0;
+  for (const p of points) {
+    const dx = p.x - meanX;
+    const dy = p.y - meanY;
+    Sxx += dx * dx;
+    Syy += dy * dy;
+    Sxy += dx * dy;
+  }
+
+  let slope = 0;
+  let r = 0;
+  let direction: 'increasing' | 'decreasing' | 'no_clear_trend' = 'no_clear_trend';
+
+  if (Sxx > 0 && Syy > 0) {
+    slope = Sxy / Sxx;
+    r = Sxy / Math.sqrt(Sxx * Syy);
+
+    if (Math.abs(r) >= TREND_CORRELATION_THRESHOLD) {
+      if (slope > 0) {
+        direction = 'increasing';
+      } else if (slope < 0) {
+        direction = 'decreasing';
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    metricType: enriched.metricType,
+    displayName: enriched.displayName,
+    unit: enriched.unit || undefined,
+    windowDays,
+    windowStart: startTime.toISOString(),
+    windowEnd: endTime.toISOString(),
+    sampleSize,
+    direction,
+    slopePerDay: round3(slope),
+    correlationCoefficient: round3(r),
+  };
+}
+
 export async function getBaselineConfig(
   userId: string,
   metricType: string
@@ -217,9 +394,6 @@ export async function getBaselineConfig(
   }
 }
 
-/**
- * Upsert saved baseline window configuration for a given metric.
- */
 export async function setBaselineConfig(
   userId: string,
   metricType: string,
@@ -228,7 +402,6 @@ export async function setBaselineConfig(
   const parsed = BaselineWindowSchema.parse({ windowDays: rawWindowDays });
   const windowDays = parsed.windowDays;
 
-  // Validate that the metric exists and is numeric or duration
   const now = new Date();
   const enriched = await queryEnrichedMetricEntries({
     userId,

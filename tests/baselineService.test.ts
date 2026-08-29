@@ -191,8 +191,16 @@ describe('Phase 6 - Personal Baselines Service Layer', () => {
         expect(result.reason).toBe('insufficient_data');
         expect(result.metricType).toBe('workout-duration');
         expect(result.displayName).toBe('Workout Duration');
+        expect(result.windowDays).toBe(DEFAULT_BASELINE_WINDOW_DAYS);
         expect(result.sampleSize).toBe(5);
         expect(result.minRequired).toBe(MIN_BASELINE_SAMPLE_SIZE);
+      }
+
+      // Assert windowDays matches explicit override on insufficient data path
+      const overrideResult = await getMetricBaseline(testUserId, 'workout-duration', 45);
+      expect(overrideResult.ok).toBe(false);
+      if (!overrideResult.ok) {
+        expect(overrideResult.windowDays).toBe(45);
       }
     });
   });

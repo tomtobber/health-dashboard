@@ -5,6 +5,7 @@ import {
   DashboardViewConfig,
   MetricValueType,
   BaselineResult,
+  TrendResult,
   BaselineConfigResult,
 } from '../types';
 
@@ -260,10 +261,16 @@ export const api = {
       body: JSON.stringify({ trigger }),
     }).catch(() => ({ status: 'pending' }));
   },
-  // Baselines
+
+  // Baselines & Trend Detection
   async getBaseline(metricType: string, windowDays?: number): Promise<BaselineResult> {
     const query = windowDays ? `?windowDays=${windowDays}` : '';
     return request<BaselineResult>(`/api/metrics/${encodeURIComponent(metricType)}/baseline${query}`);
+  },
+
+  async getTrend(metricType: string, windowDays?: number): Promise<TrendResult> {
+    const query = windowDays ? `?windowDays=${windowDays}` : '';
+    return request<TrendResult>(`/api/metrics/${encodeURIComponent(metricType)}/trend${query}`);
   },
 
   async getBaselineConfig(metricType: string): Promise<BaselineConfigResult> {
