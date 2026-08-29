@@ -229,7 +229,7 @@ export async function refreshBaselineHistory(
 
       if (snapshot.ok) {
         try {
-          await db
+          const inserted = await db
             .insert(metricBaselineHistory)
             .values({
               userId,
@@ -250,9 +250,14 @@ export async function refreshBaselineHistory(
                 metricBaselineHistory.metricType,
                 metricBaselineHistory.computedAt,
               ],
-            });
+            })
+            .returning({ id: metricBaselineHistory.id });
 
-          snapshotsAdded++;
+          if (inserted.length > 0) {
+            snapshotsAdded++;
+          } else {
+            snapshotsSkippedExisting++;
+          }
         } catch (err: unknown) {
           logger.error('Failed to insert baseline history snapshot', {
             operation: 'refreshBaselineHistory:insert',

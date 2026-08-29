@@ -154,7 +154,6 @@ describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
     });
 
     test('existing live getMetricBaseline defaults to now without changing behavior', async () => {
-      // Seed 12 entries within the trailing 30 days of real 'now'
       const now = new Date();
       const recentEntries = [];
       for (let i = 1; i <= 12; i++) {
@@ -180,7 +179,24 @@ describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
   });
 
   describe('3. Batch refreshBaselineHistory', () => {
-    test('skips boolean/category metrics silently without throwing, inserts snapshots, and is idempotent', async () => {
+    test('full backfill from zero existing rows inserts all eligible snapshots', async () => {
+      const fixedNow = new Date('2026-03-20T00:00:00.000Z');
+      const summary = await refreshBaselineHistory(testUserId, { now: fixedNow });
+
+      expect(summary.metricsProcessed).toBeGreaterThanOrEqual(1);
+      expect(summary.snapshotsAdded).toBeGreaterThanOrEqual(1);
+      expect(summary.snapshotsSkippedExisting).toBe(0);
+    });
+
+    test('idempotent second refresh adds zero new rows and reports all as skipped existing', async () => {
+      const fixedNow = new Date('2026-03-20T00:00:00.000Z');
+      const summary = await refreshBaselineHistory(testUserId, { now: fixedNow });
+
+      expect(summary.snapshotsAdded).toBe(0);
+      expect(summary.snapshotsSkippedExisting).toBeGreaterThanOrEqual(1);
+    });
+
+    test('silently skips boolean and category metrics without throwing ValidationError', async () => {
       // Insert boolean entry
       await db.insert(metricEntries).values({
         userId: testUserId,
@@ -192,28 +208,22 @@ describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
       });
 
       const fixedNow = new Date('2026-03-20T00:00:00.000Z');
-      const summary1 = await refreshBaselineHistory(testUserId, { now: fixedNow });
+      const summary = await refreshBaselineHistory(testUserId, { now: fixedNow });
 
-      expect(summary1.metricsProcessed).toBeGreaterThanOrEqual(1);
-      expect(summary1.snapshotsAdded).toBeGreaterThanOrEqual(1);
-      expect(summary1.metricsSkippedNonApplicable.some((m) => m.metricType === 'took-medication')).toBe(true);
-
-      // Second run is idempotent: 0 added, all skipped as existing
-      const summary2 = await refreshBaselineHistory(testUserId, { now: fixedNow });
-      expect(summary2.snapshotsAdded).toBe(0);
-      expect(summary2.snapshotsSkippedExisting).toBeGreaterThanOrEqual(1);
+      expect(summary.metricsSkippedNonApplicable.some((m) => m.metricType === 'took-medication')).toBe(true);
+      const skippedItem = summary.metricsSkippedNonApplicable.find((m) => m.metricType === 'took-medication');
+      expect(skippedItem?.reason).toBe('non_applicable_type');
+      expect(skippedItem?.valueType).toBe('boolean');
     });
 
     test('respects maxSnapshots cap per request and sets hasMore = true', async () => {
       const fixedNow = new Date('2026-03-20T00:00:00.000Z');
-      // Setting maxSnapshots = 0 should immediately return hasMore = true
       const summary = await refreshBaselineHistory(testUserId, { maxSnapshots: 0, now: fixedNow });
       expect(summary.hasMore).toBe(true);
       expect(summary.snapshotsAdded).toBe(0);
     });
 
     test('gap month with insufficient data leaves no row while surrounding months succeed', async () => {
-      // Define a separate metric for gap testing
       await db.insert(metricDefinitions).values({
         userId: testUserId,
         metricType: 'hydration-test-liters',
@@ -235,7 +245,6 @@ describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
         });
       }
       // Insert only 2 entries in May 2025 (months March, April, May, June have gap)
-      // For asOf = 2025-07-01 (window April-June), only 2 entries exist -> insufficient (< 10)
       const mayPoints = [
         {
           userId: testUserId,
@@ -272,7 +281,6 @@ describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
     });
 
     test('simulated concurrent double-refresh safely exercises unique constraint with ON CONFLICT DO NOTHING', async () => {
-      // Define a fresh metric
       await db.insert(metricDefinitions).values({
         userId: testUserId,
         metricType: 'concurrent-test-metric',
@@ -301,15 +309,16 @@ describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
         refreshBaselineHistory(testUserId, { now: fixedNow }),
       ]);
 
-      // Both should succeed without throwing unique constraint error
-      expect(res1.snapshotsAdded + res2.snapshotsAdded).toBeGreaterThanOrEqual(1);
-
-      // Check that the database contains strictly unique rows
       const history = await getMetricBaselineHistory(testUserId, 'concurrent-test-metric');
       const computedAtSet = new Set(history.map((h) => h.computedAt));
+      
+      // 1. Strict uniqueness guarantee in DB
       expect(computedAtSet.size).toBe(history.length);
-    });
+      expect(history.length).toBeGreaterThanOrEqual(1);
 
+      // 2. Exact match: sum of reported snapshotsAdded across both concurrent executions equals exact rows created
+      expect(res1.snapshotsAdded + res2.snapshotsAdded).toBe(history.length);
+    });
   });
 
   describe('4. getMetricBaselineHistory query', () => {
