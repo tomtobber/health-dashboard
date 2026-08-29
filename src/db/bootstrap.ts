@@ -30,8 +30,7 @@ export async function ensureDatabaseSchema(): Promise<void> {
         health_user_id TEXT,
         access_token TEXT NOT NULL,
         refresh_token TEXT NOT NULL,
-        token_expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-        scopes JSONB NOT NULL,
+        scopes TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'active',
         created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
