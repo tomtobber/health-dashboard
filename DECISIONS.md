@@ -381,3 +381,27 @@ If all daily-mean values for one metric across the historical window are identic
 ### Why no pairwise config table was introduced
 
 Unlike single-metric personal baselines (which represent an individual metric's historical normal range and are configured per metric), cross-metric correlation is an exploratory analytical query between any arbitrary pair of metrics. Storing a pairwise configuration matrix (`O(M^2)`) in the database would introduce excessive schema complexity without clear utility. Instead, the endpoint accepts an optional, validated `windowDays` query parameter that defaults to the standard 90-day window.
+
+### Why baseline snapshots are persisted rather than computed live
+
+Every prior Phase 6 slice deliberately computes statistics live from `queryEnrichedMetricEntries` rather than caching results, to avoid a second source of truth diverging from the canonical reconciled read path. Baseline history is a genuine exception to that pattern: a historical monthly snapshot (e.g. "your baseline as of 6 months ago") cannot be cheaply recomputed live once new entries have since arrived in that window, because the live baseline always resolves against the current moment. Persisting `metric_baseline_history` rows is therefore a deliberate, scoped departure — an append-only audit trail of point-in-time snapshots, not a cache of the live baseline. The live baseline and trend endpoints are unchanged and still compute exclusively live.
+
+### Why batch refresh skips non-applicable metrics instead of throwing
+
+Single-metric endpoints (`baseline`, `trend`, `correlation`) reject boolean/category value types with `ValidationError` because the caller explicitly chose that one metric. The history refresh endpoint iterates every metric a user has, so encountering a boolean or category metric partway through a batch is an expected, routine branch, not a caller mistake. Throwing would abort the whole refresh over one irrelevant metric. Non-applicable metrics are silently skipped and reported in the response summary instead.
+
+### Why the refresh endpoint is bounded per request
+
+Per AGENTS.md §4, no endpoint may run an unbounded loop over potentially-unlimited data. A user's full (metric × elapsed-month) space grows with account age and custom-metric count, so the refresh endpoint processes a bounded number of (metric, month-boundary) pairs per call and reports whether it fully finished. Because the operation is idempotent — existing rows are skipped via the unique index, and inserts use `ON CONFLICT DO NOTHING` — repeated calls safely resume where the last one stopped. A fixed extended statement timeout was rejected because a large enough account could still exceed any fixed timeout regardless of value.
+
+### Why BASELINE_HISTORY_WINDOW_DAYS is a separate constant
+
+Baseline history reuses the same 90-day value as `DEFAULT_BASELINE_WINDOW_DAYS` today, but the two are conceptually different: the live baseline's window is user-configurable per metric via `metric_baseline_configs`, while the history snapshot window is fixed and has no config endpoint. Reusing either existing constant would make a future change to one silently affect the other. This mirrors the existing project convention of keeping `MIN_BASELINE_SAMPLE_SIZE` / `MIN_TREND_SAMPLE_SIZE` / `MIN_CORRELATION_SAMPLE_SIZE` distinct even while equal.
+
+### Why only fully-elapsed calendar months are snapshotted
+
+The current, in-progress month is excluded from history generation because a snapshot taken mid-month would look like a completed observation but actually represent partial data that will keep changing until the month ends. Only month boundaries with no further data expected to arrive for that window are persisted, so a stored row's statistics never change after insert (consistent with the table being append-only, no `updated_at`).
+
+### Why the unique index doesn't include window_days
+
+The unique index is `(user_id, metric_type, computed_at)`. `window_days` is currently a single fixed constant, so this is not a live ambiguity. If `BASELINE_HISTORY_WINDOW_DAYS` is ever changed in the future, existing snapshot rows keep the window they were computed with rather than being invalidated or retroactively reinterpreted — a history entry describes what was true when it was computed, not what the current default is. This is a deliberate choice, not an oversight, and should be revisited only if multiple concurrent history windows are ever needed.

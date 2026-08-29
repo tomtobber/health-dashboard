@@ -428,3 +428,46 @@ export type CorrelationResult =
 | Methodology footer (always shown) | `Correlation describes statistical association in your trailing data and does not imply causation.` |
 
 Forbidden language: same list as baseline/trend (`normal`, `healthy`, `abnormal`, `target`, `goal`, `good`, `bad`) plus no magnitude-judgment words (`strong`, `moderate`, `weak`).
+
+## Baseline History — Slice 4 (Complete)
+
+### Purpose
+
+Persist point-in-time monthly baseline snapshots for numeric and duration metrics over historical fully-elapsed UTC calendar months.
+
+### Invariants & Rules
+
+1. **Snapshots are persisted, live baseline remains live**: Live `GET /api/metrics/:metricType/baseline` and `GET /api/metrics/:metricType/trend` continue to compute dynamically against current moment. `metric_baseline_history` rows are an immutable audit trail.
+2. **Fixed Window**: Fixed at `BASELINE_HISTORY_WINDOW_DAYS = 90` (not user-configurable).
+3. **Fully-Elapsed Months Only**: The in-progress calendar month is strictly excluded. Only month boundaries where no further data will arrive (1st of month at 00:00:00Z) are snapshotted.
+4. **Bounded Batch Refresh**: `POST /api/metrics/baseline-history/refresh` processes up to `MAX_SNAPSHOTS_PER_REFRESH = 50` snapshots per request to comply with AGENTS.md §4, returning `hasMore: boolean` and execution summary.
+5. **Non-applicable types skipped**: Boolean and category metrics are skipped silently in batch refresh and reported in response summary without throwing.
+6. **Unique Index & Idempotency**: Unique on `(user_id, metric_type, computed_at)`. Inserts use `ON CONFLICT DO NOTHING`.
+
+### Schema
+
+`metric_baseline_history`:
+- `id`: UUID primary key
+- `user_id`: FK to `users.id`, `ON DELETE CASCADE`
+- `metric_type`: text, no FK
+- `computed_at`: timestamp with time zone (UTC 1st-of-month boundary)
+- `window_days`: integer (90)
+- `window_start`: timestamp with time zone
+- `window_end`: timestamp with time zone
+- `mean`: double precision
+- `stddev`: double precision
+- `min`: double precision
+- `max`: double precision
+- `sample_size`: integer
+- `created_at`: timestamp with time zone default now (no `updated_at`)
+- Unique index: `(user_id, metric_type, computed_at)`
+
+### Endpoints
+
+- `POST /api/metrics/baseline-history/refresh`
+  - Auth: required
+  - Returns: `BaselineHistoryRefreshSummary` (`metricsProcessed`, `snapshotsAdded`, `snapshotsSkippedExisting`, `snapshotsSkippedInsufficientData`, `metricsSkippedNonApplicable`, `hasMore`)
+- `GET /api/metrics/:metricType/baseline-history?startTime=&endTime=`
+  - Auth: required
+  - Validates ISO datetime range
+  - Returns: `{ metricType: string, history: BaselineHistoryItem[] }` sorted by `computed_at` ascending

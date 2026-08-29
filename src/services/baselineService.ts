@@ -8,6 +8,7 @@ import { DatabaseError, ValidationError } from '../errors/AppError';
 import { logger } from '../utils/logger';
 
 export const DEFAULT_BASELINE_WINDOW_DAYS = 90;
+export const BASELINE_HISTORY_WINDOW_DAYS = 90;
 export const MIN_BASELINE_SAMPLE_SIZE = 10;
 export const MIN_BASELINE_WINDOW_DAYS = 7;
 export const MAX_BASELINE_WINDOW_DAYS = 3650;
@@ -86,50 +87,20 @@ export function round3(val: number): number {
   return Object.is(res, -0) ? 0 : res;
 }
 
-export async function getMetricBaseline(
+export interface BaselineStatsComputeOptions {
+  windowDays: number;
+  asOf?: Date;
+}
+
+export async function computeMetricBaseline(
   userId: string,
   metricType: string,
-  windowDaysOverride?: number
+  options: BaselineStatsComputeOptions
 ): Promise<BaselineResult> {
-  let windowDays = DEFAULT_BASELINE_WINDOW_DAYS;
-
-  if (windowDaysOverride !== undefined) {
-    const parsed = BaselineWindowSchema.parse({ windowDays: windowDaysOverride });
-    windowDays = parsed.windowDays;
-  } else {
-    try {
-      const configRows = await db
-        .select()
-        .from(metricBaselineConfigs)
-        .where(
-          and(
-            eq(metricBaselineConfigs.userId, userId),
-            eq(metricBaselineConfigs.metricType, metricType)
-          )
-        )
-        .limit(1);
-
-      if (configRows.length > 0 && configRows[0]) {
-        windowDays = configRows[0].windowDays;
-      }
-    } catch (err: unknown) {
-      logger.error('Failed to query metric baseline config', {
-        operation: 'getMetricBaseline',
-        userId,
-        metricType,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      throw new DatabaseError(
-        'Failed to query metric baseline configuration',
-        { operation: 'getMetricBaseline', userId, metricType },
-        err
-      );
-    }
-  }
-
-  const now = new Date();
-  const startTime = new Date(now.getTime() - windowDays * 86400000);
-  const endTime = now;
+  const asOf = options.asOf || new Date();
+  const windowDays = options.windowDays;
+  const startTime = new Date(asOf.getTime() - windowDays * 86400000);
+  const endTime = asOf;
 
   const enriched = await queryEnrichedMetricEntries({
     userId,
@@ -142,7 +113,7 @@ export async function getMetricBaseline(
     throw new ValidationError(
       `Baseline computation is only supported for numeric or duration metrics, received '${enriched.valueType}'`,
       {
-        operation: 'getMetricBaseline',
+        operation: 'computeMetricBaseline',
         userId,
         metricType,
         valueType: enriched.valueType,
@@ -194,6 +165,54 @@ export async function getMetricBaseline(
     displayName: enriched.displayName,
     unit: enriched.unit || undefined,
   };
+}
+
+export async function getMetricBaseline(
+  userId: string,
+  metricType: string,
+  windowDaysOverride?: number,
+  asOf?: Date
+): Promise<BaselineResult> {
+  let windowDays = DEFAULT_BASELINE_WINDOW_DAYS;
+
+  if (windowDaysOverride !== undefined) {
+    const parsed = BaselineWindowSchema.parse({ windowDays: windowDaysOverride });
+    windowDays = parsed.windowDays;
+  } else {
+    try {
+      const configRows = await db
+        .select()
+        .from(metricBaselineConfigs)
+        .where(
+          and(
+            eq(metricBaselineConfigs.userId, userId),
+            eq(metricBaselineConfigs.metricType, metricType)
+          )
+        )
+        .limit(1);
+
+      if (configRows.length > 0 && configRows[0]) {
+        windowDays = configRows[0].windowDays;
+      }
+    } catch (err: unknown) {
+      logger.error('Failed to query metric baseline config', {
+        operation: 'getMetricBaseline',
+        userId,
+        metricType,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw new DatabaseError(
+        'Failed to query metric baseline configuration',
+        { operation: 'getMetricBaseline', userId, metricType },
+        err
+      );
+    }
+  }
+
+  return computeMetricBaseline(userId, metricType, {
+    windowDays,
+    asOf: asOf || new Date(),
+  });
 }
 
 export async function getMetricTrend(

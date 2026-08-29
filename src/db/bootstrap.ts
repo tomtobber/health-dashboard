@@ -140,6 +140,26 @@ export async function ensureDatabaseSchema(): Promise<void> {
 
       CREATE UNIQUE INDEX IF NOT EXISTS metric_baseline_configs_user_metric_idx
         ON metric_baseline_configs (user_id, metric_type);
+
+      CREATE TABLE IF NOT EXISTS metric_baseline_history (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        metric_type TEXT NOT NULL,
+        computed_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        window_days INTEGER NOT NULL,
+        window_start TIMESTAMP WITH TIME ZONE NOT NULL,
+        window_end TIMESTAMP WITH TIME ZONE NOT NULL,
+        mean DOUBLE PRECISION NOT NULL,
+        stddev DOUBLE PRECISION NOT NULL,
+        min DOUBLE PRECISION NOT NULL,
+        max DOUBLE PRECISION NOT NULL,
+        sample_size INTEGER NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS metric_baseline_history_user_metric_computed_idx
+        ON metric_baseline_history (user_id, metric_type, computed_at);
+
   
     `);
 

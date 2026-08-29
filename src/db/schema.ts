@@ -120,3 +120,29 @@ export const metricBaselineConfigs = pgTable('metric_baseline_configs', {
 }, (table) => ({
   userMetricIdx: uniqueIndex('metric_baseline_configs_user_metric_idx').on(table.userId, table.metricType),
 }));
+
+export const metricBaselineHistory = pgTable(
+  'metric_baseline_history',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+    metricType: text('metric_type').notNull(),
+    computedAt: timestamp('computed_at', { withTimezone: true }).notNull(),
+    windowDays: integer('window_days').notNull(),
+    windowStart: timestamp('window_start', { withTimezone: true }).notNull(),
+    windowEnd: timestamp('window_end', { withTimezone: true }).notNull(),
+    mean: doublePrecision('mean').notNull(),
+    stddev: doublePrecision('stddev').notNull(),
+    min: doublePrecision('min').notNull(),
+    max: doublePrecision('max').notNull(),
+    sampleSize: integer('sample_size').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    userMetricComputedIdx: uniqueIndex('metric_baseline_history_user_metric_computed_idx').on(
+      table.userId,
+      table.metricType,
+      table.computedAt
+    ),
+  })
+);

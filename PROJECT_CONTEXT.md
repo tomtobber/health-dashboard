@@ -116,12 +116,13 @@ A personal (initially single/small-user) web application that aggregates health 
 | 3. Custom metrics | complete | `phases/phase3-detail.md` |
 | 4. Other integrations | deferred indefinitely | see `DECISIONS.md` |
 | 5. Customizable charts | complete | `phases/phase5-detail.md` |
-| 6. Conclusions / insights | complete | `phases/phase6-detail.md` |
+| 6. Conclusions / insights | active (slice 4 in progress) | `phases/phase6-detail.md` |
 
 Phase 6 currently contains:
 - Personal baselines: complete (Slice 1).
 - Trend detection: complete (Slice 2).
 - Correlation between user-chosen metric pairs: complete (Slice 3).
+- Baseline history snapshots: in progress (Slice 4).
 
 ## Architecture Principles — Hard Invariants
 
@@ -187,6 +188,20 @@ Deletion:
 - Deleting a `users` row cascades to connected accounts and metric entries.
 - A future reversible account-deletion UX would be application-layer scheduling, not a reason to remove DB cascades.
 
+### `metric_baseline_history`
+
+Append-only monthly baseline snapshots. Never updated after insert.
+
+- `user_id`: FK to `users.id`, `ON DELETE CASCADE`
+- `metric_type`: string, no FK (can outlive a deleted custom metric)
+- `computed_at`: the UTC month-boundary this snapshot represents
+- `window_days`, `window_start`, `window_end`
+- `mean`, `stddev`, `min`, `max`, `sample_size`
+- `created_at` (no `updated_at` — append-only)
+- Unique on `(user_id, metric_type, computed_at)`
+
+Full contract in `phases/phase6-detail.md`.
+
 ## Completed Feature Contracts
 
 ### Phase 3 — Custom metrics
@@ -237,15 +252,16 @@ Detailed contract/API: `phases/phase3-detail.md`.
 
 Detailed contract/API/UI: `phases/phase5-detail.md`.
 
-### Phase 6 — Conclusions / insights
+## Phase 6 — Current Feature State
 
-#### Personal baselines
+### Personal baselines — complete
+
 - Mean, standard deviation, min, max, sample size.
 - Numeric/duration only; boolean/category requests are validation errors.
 - Computed live from the canonical enriched reconciled read path.
 - Default window: 90 days.
 - Minimum sample size: 10.
-- Fewer than 10 entries returns an explicit `insufficient_data` result (includes resolved `windowDays`).
+- Fewer than 10 entries returns an explicit `insufficient_data` result.
 - Per-user/per-metric window config lives in `metric_baseline_configs`.
 - Config is intentionally not FK-linked to metric definitions so it may outlive a deleted custom metric.
 - `GET /api/metrics/:metricType/baseline`
@@ -254,29 +270,45 @@ Detailed contract/API/UI: `phases/phase5-detail.md`.
 - Exact approved UI copy is in `phases/phase6-detail.md`.
 - Never use population-referenced/evaluative language such as "normal", "healthy", "abnormal", "target", "goal", "good", or "bad".
 
-#### Trend detection
+### Trend detection — complete
+
 - Single numeric/duration metric.
 - Reuses the Personal Baseline window config.
 - Ordinary least-squares regression of value against time.
 - Entries are bucketed to one mean per UTC calendar day before regression.
 - Regression x is actual calendar days since window start, not sequential rank.
 - Requires at least 10 distinct daily buckets.
-- Pearson `r` gates directional labeling (`TREND_CORRELATION_THRESHOLD = 0.3`).
+- Pearson `r` gates directional labeling.
+- Default `TREND_CORRELATION_THRESHOLD = 0.3`.
 - Labels: `increasing`, `decreasing`, `no_clear_trend`.
 - `GET /api/metrics/:metricType/trend`
 - Uses the same `metric_baseline_configs` endpoint for window configuration.
+- Exact implementation detail is in `phases/phase6-detail.md`.
 
-#### Cross-metric correlation
-- Pairwise numeric/duration metrics only; boolean/category requests are validation errors.
-- Same-metric pairs rejected.
-- Computed from `queryBatchEnrichedMetrics`, aligned by UTC calendar day (inner join).
-- Minimum sample size: 10 aligned days.
-- Binary significance gate: `|r| >= CORRELATION_SIGNIFICANCE_THRESHOLD` (0.3) -> `hasClearCorrelation`.
-- Zero-variance guard: `Sxx == 0 || Syy == 0` maps to `r = 0` and `hasClearCorrelation = false`.
-- No persisted pairwise config; `windowDays` is a per-request override only, default 90.
+### Cross-metric correlation — complete
+
+- Descriptive Pearson correlation between two user-chosen numeric/duration metrics.
+- `metricTypeA !== metricTypeB` enforced; same-metric pairs are validation errors.
+- Boolean/category metrics are validation errors, matching baseline/trend.
+- Computed from `queryBatchEnrichedMetrics`, aligned by UTC calendar day via inner join (`D = D_A ∩ D_B`).
+- Minimum sample size: 10 aligned days, via its own named constant `MIN_CORRELATION_SAMPLE_SIZE`.
+- Zero-variance in either series maps to `r = 0` rather than an error.
+- Binary significance gate: `|r| >= CORRELATION_SIGNIFICANCE_THRESHOLD` (default `0.3`) → `hasClearCorrelation`. No "strong"/"moderate"/"weak" labels are used anywhere.
+- No persisted pairwise config table; `windowDays` is an optional per-request override only, default 90.
 - `GET /api/metrics/correlation`
+- Exact implementation detail is in `phases/phase6-detail.md`.
 
-Detailed contract/API/UI: `phases/phase6-detail.md`.
+### Baseline history — fourth slice, in progress
+
+- Append-only monthly snapshots of the same statistics as the live baseline (mean, stddev, min, max, sample size), computed as of each fully-elapsed UTC calendar-month boundary.
+- Fixed, non-configurable window: `BASELINE_HISTORY_WINDOW_DAYS = 90`. No config endpoint exists for it.
+- Current in-progress month is never snapshotted.
+- Snapshots are generated by `POST /api/metrics/baseline-history/refresh`, which is idempotent and safely re-callable; it processes a bounded amount of work per call rather than looping unboundedly.
+- Existing rows are never recomputed or modified once inserted.
+- Rows below the baseline sample-size gate are simply not created for that boundary — there is no stored "insufficient data" row.
+- `GET /api/metrics/:metricType/baseline-history?startTime=&endTime=` returns stored rows for the authenticated user in that range.
+- Does not change the live baseline or trend endpoints' behavior.
+- Exact implementation detail is in `phases/phase6-detail.md`.
 
 ## Data Volume / Resolution
 
@@ -345,6 +377,7 @@ Current accepted webhook metric types and polling-only types are maintained in `
 - Phase 2: how long full-resolution `raw_payload` data is retained before pruning.
 - Phase 4: adapter generalization strategy remains intentionally deferred until an actual second integration is chosen.
 - Provider webhook/identity behavior: re-verify against live Google documentation before trusting details that have not been checked recently.
+- Phase 6 Slice 4: confirm the chosen per-request bounding approach (chunked pagination vs. extended timeout) against the actual text of AGENTS.md §4 before considering this finalized.
 
 ## Historical Rationale
 
