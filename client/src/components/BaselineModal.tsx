@@ -1,19 +1,21 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { BaselineResult, TrendResult } from '../types';
+import { BaselineResult, TrendResult, MetricDefinition } from '../types';
 import { api } from '../services/api';
-import { X, Activity, Settings2, RefreshCw, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { X, Activity, Settings2, RefreshCw, TrendingUp, TrendingDown, Minus, CheckCircle } from 'lucide-react';
 
 interface BaselineModalProps {
-  metricType: string;
-  metricDisplayName?: string;
+  initialMetricType?: string;
+  initialDisplayName?: string;
   onClose: () => void;
 }
 
 export const BaselineModal: React.FC<BaselineModalProps> = ({
-  metricType,
-  metricDisplayName,
+  initialMetricType,
+  initialDisplayName,
   onClose,
 }) => {
+  const [metricDefinitions, setMetricDefinitions] = useState<MetricDefinition[]>([]);
+  const [selectedMetricType, setSelectedMetricType] = useState<string>(initialMetricType || '');
   const [baseline, setBaseline] = useState<BaselineResult | null>(null);
   const [trend, setTrend] = useState<TrendResult | null>(null);
   const [windowInput, setWindowInput] = useState<number>(90);
@@ -21,17 +23,48 @@ export const BaselineModal: React.FC<BaselineModalProps> = ({
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [baselineError, setBaselineError] = useState<string | null>(null);
   const [trendError, setTrendError] = useState<string | null>(null);
-  const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
+  const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
+
+  // Load available numeric/duration metric definitions
+  useEffect(() => {
+    let mounted = true;
+    api.listMetricDefinitions(true).then((defs) => {
+      if (mounted) {
+        const numericDefs = defs.filter(
+          (d) => d.valueType === 'numeric' || d.valueType === 'duration'
+        );
+        setMetricDefinitions(numericDefs);
+
+        if (!selectedMetricType) {
+          if (initialMetricType) {
+            setSelectedMetricType(initialMetricType);
+          } else if (numericDefs.length > 0) {
+            setSelectedMetricType(numericDefs[0].metricType);
+          } else {
+            setSelectedMetricType('heart-rate');
+          }
+        }
+      }
+    }).catch((err) => {
+      console.error('Failed to load metric definitions for baseline modal:', err);
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, [initialMetricType, selectedMetricType]);
 
   const fetchAnalyticsData = useCallback(async (overrideDays?: number) => {
+    if (!selectedMetricType) return;
+
     setIsLoading(true);
     setBaselineError(null);
     setTrendError(null);
 
     const [baselineSettled, trendSettled, configSettled] = await Promise.allSettled([
-      api.getBaseline(metricType, overrideDays),
-      api.getTrend(metricType, overrideDays),
-      api.getBaselineConfig(metricType),
+      api.getBaseline(selectedMetricType, overrideDays),
+      api.getTrend(selectedMetricType, overrideDays),
+      api.getBaselineConfig(selectedMetricType),
     ]);
 
     if (baselineSettled.status === 'fulfilled') {
@@ -51,11 +84,13 @@ export const BaselineModal: React.FC<BaselineModalProps> = ({
     }
 
     setIsLoading(false);
-  }, [metricType]);
+  }, [selectedMetricType]);
 
   useEffect(() => {
-    fetchAnalyticsData();
-  }, [fetchAnalyticsData]);
+    if (selectedMetricType) {
+      fetchAnalyticsData();
+    }
+  }, [fetchAnalyticsData, selectedMetricType]);
 
   const handleSaveWindow = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,13 +102,15 @@ export const BaselineModal: React.FC<BaselineModalProps> = ({
     setIsSaving(true);
     setBaselineError(null);
     setTrendError(null);
-    setSaveSuccess(false);
+    setSaveSuccessMessage(null);
 
     try {
-      await api.setBaselineConfig(metricType, windowInput);
-      setSaveSuccess(true);
+      await api.setBaselineConfig(selectedMetricType, windowInput);
+      setSaveSuccessMessage(
+        `Saved ${windowInput} days as your default historical calculation window for ${displayName}. It will govern all future baseline and trend queries for this metric.`
+      );
       await fetchAnalyticsData(windowInput);
-      setTimeout(() => setSaveSuccess(false), 3000);
+      setTimeout(() => setSaveSuccessMessage(null), 6000);
     } catch (err: unknown) {
       setBaselineError(err instanceof Error ? err.message : 'Failed to save baseline window configuration');
     } finally {
@@ -81,19 +118,27 @@ export const BaselineModal: React.FC<BaselineModalProps> = ({
     }
   };
 
+  const handlePreviewWindow = async (days: number) => {
+    setWindowInput(days);
+    await fetchAnalyticsData(days);
+  };
+
+  const currentMetricDef = metricDefinitions.find((m) => m.metricType === selectedMetricType);
   const displayName =
     (baseline && baseline.displayName) ||
     (trend && trend.displayName) ||
-    metricDisplayName ||
-    metricType;
+    (currentMetricDef && currentMetricDef.displayName) ||
+    initialDisplayName ||
+    selectedMetricType;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+      <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '640px' }}>
+        {/* Modal Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <Activity size={20} color="var(--accent-primary)" />
-            <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+            <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
               Personal Baseline: {displayName}
             </h2>
           </div>
@@ -101,6 +146,27 @@ export const BaselineModal: React.FC<BaselineModalProps> = ({
             <X size={18} />
           </button>
         </div>
+
+        {/* Metric Selector Dropdown */}
+        {metricDefinitions.length > 0 && (
+          <div style={{ marginBottom: '1.25rem', background: 'var(--bg-card-header)', padding: '0.75rem 1rem', borderRadius: '10px', border: '1px solid var(--border-color)' }}>
+            <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.375rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Select Metric to Inspect
+            </label>
+            <select
+              value={selectedMetricType}
+              onChange={(e) => setSelectedMetricType(e.target.value)}
+              className="input-field"
+              style={{ width: '100%', fontSize: '0.875rem', padding: '0.5rem 0.75rem' }}
+            >
+              {metricDefinitions.map((d) => (
+                <option key={d.metricType} value={d.metricType}>
+                  {d.displayName} ({d.unit || d.valueType})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {baselineError && (
           <div style={{ padding: '0.75rem', background: 'rgba(244,63,94,0.15)', border: '1px solid rgba(244,63,94,0.3)', borderRadius: '8px', color: '#f43f5e', fontSize: '0.8125rem', marginBottom: '1rem' }}>
@@ -114,16 +180,17 @@ export const BaselineModal: React.FC<BaselineModalProps> = ({
           </div>
         )}
 
-        {saveSuccess && (
-          <div style={{ padding: '0.75rem', background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '8px', color: '#10b981', fontSize: '0.8125rem', marginBottom: '1rem' }}>
-            Baseline window configuration saved successfully.
+        {saveSuccessMessage && (
+          <div style={{ padding: '0.75rem 1rem', background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '8px', color: '#10b981', fontSize: '0.8125rem', marginBottom: '1rem', display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+            <CheckCircle size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
+            <span>{saveSuccessMessage}</span>
           </div>
         )}
 
         {isLoading ? (
-          <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
+          <div style={{ padding: '2.5rem 1rem', textAlign: 'center', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
             <RefreshCw size={24} className="spin" />
-            <span>Calculating analytics...</span>
+            <span style={{ fontSize: '0.875rem' }}>Calculating baseline and trend statistics...</span>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', marginBottom: '1.5rem' }}>
@@ -197,19 +264,33 @@ export const BaselineModal: React.FC<BaselineModalProps> = ({
           </div>
         )}
 
+        {/* Window Configuration Section */}
         <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1.25rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', marginBottom: '0.75rem' }}>
-            <Settings2 size={16} color="var(--text-secondary)" />
-            <h3 style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
-              Historical Window Configuration
-            </h3>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+              <Settings2 size={16} color="var(--text-secondary)" />
+              <h3 style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
+                Historical Window (Days)
+              </h3>
+            </div>
+            {/* Quick Preview Presets */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+              {[30, 90, 180, 365].map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => handlePreviewWindow(d)}
+                  className={`btn btn-secondary ${windowInput === d ? 'active' : ''}`}
+                  style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}
+                >
+                  {d}d
+                </button>
+              ))}
+            </div>
           </div>
 
           <form onSubmit={handleSaveWindow} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <div>
-              <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.25rem' }}>
-                Historical Window (Days)
-              </label>
               <input
                 type="number"
                 className="input-field"
@@ -218,19 +299,33 @@ export const BaselineModal: React.FC<BaselineModalProps> = ({
                 value={windowInput}
                 onChange={(e) => setWindowInput(Number(e.target.value))}
                 required
+                style={{ width: '120px' }}
               />
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginTop: '0.25rem' }}>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginTop: '0.375rem' }}>
                 Calculated over your trailing history up to right now. Governs both Personal Baseline and Directional Trend.
               </span>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
-              <button type="button" className="btn btn-secondary" onClick={onClose}>
-                Close
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => fetchAnalyticsData(windowInput)}
+                disabled={isLoading}
+                style={{ fontSize: '0.8125rem' }}
+              >
+                <RefreshCw size={13} className={isLoading ? 'spin' : ''} />
+                <span>Recalculate</span>
               </button>
-              <button type="submit" className="btn btn-primary" disabled={isSaving}>
-                {isSaving ? 'Saving...' : 'Save Window'}
-              </button>
+
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button type="button" className="btn btn-secondary" onClick={onClose}>
+                  Close
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={isSaving}>
+                  {isSaving ? 'Saving...' : 'Save Window'}
+                </button>
+              </div>
             </div>
           </form>
         </div>
