@@ -80,7 +80,7 @@ export const BaselinePanel: React.FC<BaselinePanelProps> = ({
       const MAX_ITERATIONS = 20;
 
       while (hasMore && iterations < MAX_ITERATIONS) {
-        const summary = await api.refreshBaselineHistory();
+        const summary = await api.refreshBaselineHistory(panel.metricType);
         totalSnapshotsAdded += summary.snapshotsAdded;
         totalMetricsProcessed = Math.max(totalMetricsProcessed, summary.metricsProcessed);
         hasMore = summary.hasMore;

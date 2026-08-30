@@ -135,12 +135,30 @@ const BaselineHistoryQuerySchema = z.object({
   endTime: z.string().datetime({ message: 'endTime must be a valid ISO 8601 datetime string' }).optional(),
 });
 
-// POST /api/metrics/baseline-history/refresh (Batch generate monthly snapshots)
+// POST /api/metrics/baseline-history/refresh (Batch generate monthly snapshots, optional metricType query/body)
 baselineRouter.post(
   '/baseline-history/refresh',
   authenticateToken,
   asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<unknown> => {
-    const summary = await refreshBaselineHistory(req.user!.id);
+    const metricType = typeof req.query.metricType === 'string' ? req.query.metricType : req.body?.metricType;
+    const summary = await refreshBaselineHistory(req.user!.id, { metricType });
+    return res.status(200).json(summary);
+  })
+);
+
+// POST /api/metrics/:metricType/baseline-history/refresh (Generate monthly snapshots for specific metric)
+baselineRouter.post(
+  '/:metricType/baseline-history/refresh',
+  authenticateToken,
+  asyncHandler(async (req: AuthenticatedRequest, res: Response): Promise<unknown> => {
+    const { metricType } = req.params;
+    if (!metricType) {
+      throw new ValidationError('metricType parameter is required', {
+        operation: 'refreshMetricBaselineHistoryRoute',
+      });
+    }
+
+    const summary = await refreshBaselineHistory(req.user!.id, { metricType });
     return res.status(200).json(summary);
   })
 );

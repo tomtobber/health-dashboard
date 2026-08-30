@@ -86,6 +86,25 @@ describe('Phase 6 Slice 4 - Baseline History HTTP Routes', () => {
     });
   });
 
+
+  describe('POST /api/metrics/:metricType/baseline-history/refresh', () => {
+    test('requires authentication', async () => {
+      const res = await request(app).post('/api/metrics/daily-steps-count/baseline-history/refresh');
+      expect(res.status).toBe(401);
+    });
+
+    test('successfully generates snapshots for the specified metric only', async () => {
+      const res = await request(app)
+        .post('/api/metrics/daily-steps-count/baseline-history/refresh')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('metricsProcessed');
+      expect(res.body).toHaveProperty('snapshotsAdded');
+      expect(res.body).toHaveProperty('hasMore');
+    });
+  });
+
   describe('GET /api/metrics/:metricType/baseline-history', () => {
     test('requires authentication', async () => {
       const res = await request(app).get('/api/metrics/daily-steps-count/baseline-history');

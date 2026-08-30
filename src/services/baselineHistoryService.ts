@@ -92,28 +92,32 @@ async function resolveMetricValueType(userId: string, metricType: string): Promi
  */
 export async function refreshBaselineHistory(
   userId: string,
-  options?: { maxSnapshots?: number; now?: Date }
+  options?: { metricType?: string; maxSnapshots?: number; now?: Date }
 ): Promise<BaselineHistoryRefreshSummary> {
   const maxSnapshots = options?.maxSnapshots ?? MAX_SNAPSHOTS_PER_REFRESH;
   const now = options?.now ?? new Date();
 
   let distinctMetricRows: Array<{ metricType: string }>;
-  try {
-    distinctMetricRows = await db
-      .selectDistinct({ metricType: metricEntries.metricType })
-      .from(metricEntries)
-      .where(and(eq(metricEntries.userId, userId), isNull(metricEntries.deletedAt)));
-  } catch (err: unknown) {
-    logger.error('Failed to query distinct metric types for baseline history refresh', {
-      operation: 'refreshBaselineHistory',
-      userId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw new DatabaseError(
-      'Failed to query metrics for baseline history refresh',
-      { operation: 'refreshBaselineHistory', userId },
-      err
-    );
+  if (options?.metricType) {
+    distinctMetricRows = [{ metricType: options.metricType }];
+  } else {
+    try {
+      distinctMetricRows = await db
+        .selectDistinct({ metricType: metricEntries.metricType })
+        .from(metricEntries)
+        .where(and(eq(metricEntries.userId, userId), isNull(metricEntries.deletedAt)));
+    } catch (err: unknown) {
+      logger.error('Failed to query distinct metric types for baseline history refresh', {
+        operation: 'refreshBaselineHistory',
+        userId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw new DatabaseError(
+        'Failed to query metrics for baseline history refresh',
+        { operation: 'refreshBaselineHistory', userId },
+        err
+      );
+    }
   }
 
   let metricsProcessed = 0;

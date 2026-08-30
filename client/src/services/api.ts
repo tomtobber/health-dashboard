@@ -312,9 +312,12 @@ export const api = {
     );
   },
 
-  async refreshBaselineHistory(): Promise<BaselineHistoryRefreshSummary> {
-    return request<BaselineHistoryRefreshSummary>('/api/metrics/baseline-history/refresh', {
-      method: 'POST',
-    });
+  async refreshBaselineHistory(metricType: string): Promise<BaselineHistoryRefreshSummary> {
+    return request<BaselineHistoryRefreshSummary>(
+      `/api/metrics/${encodeURIComponent(metricType)}/baseline-history/refresh`,
+      {
+        method: 'POST',
+      }
+    );
   },
 };

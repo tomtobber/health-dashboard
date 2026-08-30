@@ -318,6 +318,41 @@ describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
       // 2. Exact match: sum of reported snapshotsAdded across both concurrent executions equals exact rows created
       expect(res1.snapshotsAdded + res2.snapshotsAdded).toBe(history.length);
     });
+
+    test('refreshBaselineHistory with metricType option targets only the specified metric', async () => {
+      await db.insert(metricDefinitions).values({
+        userId: testUserId,
+        metricType: 'targeted-refresh-metric',
+        displayName: 'Targeted Metric',
+        valueType: 'numeric',
+      });
+
+      const points = [];
+      for (let i = 1; i <= 15; i++) {
+        points.push({
+          userId: testUserId,
+          provider: 'manual',
+          metricType: 'targeted-refresh-metric',
+          startTime: new Date(`2026-01-${i.toString().padStart(2, '0')}T10:00:00.000Z`),
+          endTime: new Date(`2026-01-${i.toString().padStart(2, '0')}T10:00:00.000Z`),
+          valueNumeric: 200 + i,
+        });
+      }
+      await db.insert(metricEntries).values(points);
+
+      const summary = await refreshBaselineHistory(testUserId, {
+        metricType: 'targeted-refresh-metric',
+        now: new Date('2026-03-20T00:00:00.000Z'),
+      });
+
+      expect(summary.metricsProcessed).toBe(1);
+      expect(summary.snapshotsAdded).toBeGreaterThanOrEqual(1);
+
+      const history = await getMetricBaselineHistory(testUserId, 'targeted-refresh-metric');
+      expect(history.length).toBeGreaterThanOrEqual(1);
+      expect(history[0].metricType).toBe('targeted-refresh-metric');
+    });
+
   });
 
   describe('4. getMetricBaselineHistory query', () => {
