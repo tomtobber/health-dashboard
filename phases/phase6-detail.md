@@ -441,8 +441,8 @@ Persist point-in-time monthly baseline snapshots for numeric and duration metric
 1. **Snapshots are persisted, live baseline remains live**: Live `GET /api/metrics/:metricType/baseline` and `GET /api/metrics/:metricType/trend` continue to compute dynamically against current moment. `metric_baseline_history` rows are an immutable audit trail.
 2. **Fixed Window**: Fixed at `BASELINE_HISTORY_WINDOW_DAYS = 90` (not user-configurable).
 3. **Fully-Elapsed Months Only**: The in-progress calendar month is strictly excluded. Only month boundaries where no further data will arrive (1st of month at 00:00:00Z) are snapshotted.
-4. **Bounded Batch Refresh**: `POST /api/metrics/baseline-history/refresh` processes up to `MAX_SNAPSHOTS_PER_REFRESH = 50` snapshots per request to comply with AGENTS.md §4, returning `hasMore: boolean` and execution summary.
-5. **Non-applicable types skipped**: Boolean and category metrics are skipped silently in batch refresh and reported in response summary without throwing.
+4. **Bounded Single-Metric Refresh**: `POST /api/metrics/:metricType/baseline-history/refresh` generates snapshots exclusively for the specified metric up to `MAX_SNAPSHOTS_PER_REFRESH = 50` elapsed month boundaries per request, returning `hasMore: boolean` and execution summary.
+5. **Input Validation**: Non-numeric/non-duration metrics throw `ValidationError`. Requesting a metric with zero entries throws `NotFoundError`.
 6. **Unique Index & Idempotency**: Unique on `(user_id, metric_type, computed_at)`. Inserts use `ON CONFLICT DO NOTHING`.
 
 ### Schema
@@ -468,11 +468,7 @@ Persist point-in-time monthly baseline snapshots for numeric and duration metric
 - `POST /api/metrics/:metricType/baseline-history/refresh`
   - Auth: required
   - Scopes generation exclusively to `:metricType`.
-  - Returns: `BaselineHistoryRefreshSummary` (`metricsProcessed`, `snapshotsAdded`, `snapshotsSkippedExisting`, `snapshotsSkippedInsufficientData`, `metricsSkippedNonApplicable`, `hasMore`)
-- `POST /api/metrics/baseline-history/refresh`
-  - Auth: required
-  - Optional `metricType` query or body parameter. When omitted, refreshes across all eligible account metrics in bounded chunks of 50.
-  - Returns: `BaselineHistoryRefreshSummary`
+  - Returns: `BaselineHistoryRefreshSummary` (`snapshotsAdded`, `snapshotsSkippedExisting`, `snapshotsSkippedInsufficientData`, `hasMore`)
 - `GET /api/metrics/:metricType/baseline-history?startTime=&endTime=`
   - Auth: required
   - Validates ISO datetime range
@@ -481,7 +477,7 @@ Persist point-in-time monthly baseline snapshots for numeric and duration metric
 ### Frontend Integration Contract (Future UI Work)
 
 When wiring the "Refresh Baseline History" action in the UI:
-1. **Client-Side Pagination Loop**: Because `POST /api/metrics/baseline-history/refresh` is bounded to `MAX_SNAPSHOTS_PER_REFRESH = 50` and returns `hasMore: boolean`, the client MUST NOT issue a single fire-and-forget request.
+1. **Client-Side Pagination Loop**: Because `POST /api/metrics/:metricType/baseline-history/refresh` is bounded to `MAX_SNAPSHOTS_PER_REFRESH = 50` and returns `hasMore: boolean`, the client MUST NOT issue a single fire-and-forget request.
 2. **Loop Implementation**: The frontend service/handler must execute a loop:
    ```ts
    let hasMore = true;

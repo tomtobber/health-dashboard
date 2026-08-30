@@ -3,7 +3,7 @@ import { metricBaselineHistory, metricEntries, metricDefinitions } from '../db/s
 import { and, eq, gte, lte, isNull, asc, sql } from 'drizzle-orm';
 import { computeMetricBaseline, BASELINE_HISTORY_WINDOW_DAYS, MIN_BASELINE_SAMPLE_SIZE } from './baselineService';
 import { getCanonicalProviderMetricMetadata } from '../adapters/baseAdapter';
-import { DatabaseError } from '../errors/AppError';
+import { DatabaseError, ValidationError, NotFoundError } from '../errors/AppError';
 import { logger } from '../utils/logger';
 
 export { BASELINE_HISTORY_WINDOW_DAYS };
@@ -27,15 +27,9 @@ export interface BaselineHistoryItem {
 }
 
 export interface BaselineHistoryRefreshSummary {
-  metricsProcessed: number;
   snapshotsAdded: number;
   snapshotsSkippedExisting: number;
   snapshotsSkippedInsufficientData: number;
-  metricsSkippedNonApplicable: Array<{
-    metricType: string;
-    reason: 'non_applicable_type';
-    valueType: string;
-  }>;
   hasMore: boolean;
 }
 
@@ -87,103 +81,83 @@ async function resolveMetricValueType(userId: string, metricType: string): Promi
 }
 
 /**
- * Iterates eligible numeric/duration metrics for a user and generates monthly baseline snapshots.
+ * Generates monthly baseline snapshots for a single numeric/duration metric.
  * Bounded per call to MAX_SNAPSHOTS_PER_REFRESH to guarantee execution within request timeouts.
  */
 export async function refreshBaselineHistory(
   userId: string,
-  options?: { metricType?: string; maxSnapshots?: number; now?: Date }
+  metricType: string,
+  options?: { maxSnapshots?: number; now?: Date }
 ): Promise<BaselineHistoryRefreshSummary> {
   const maxSnapshots = options?.maxSnapshots ?? MAX_SNAPSHOTS_PER_REFRESH;
   const now = options?.now ?? new Date();
 
-  let distinctMetricRows: Array<{ metricType: string }>;
-  if (options?.metricType) {
-    distinctMetricRows = [{ metricType: options.metricType }];
-  } else {
-    try {
-      distinctMetricRows = await db
-        .selectDistinct({ metricType: metricEntries.metricType })
-        .from(metricEntries)
-        .where(and(eq(metricEntries.userId, userId), isNull(metricEntries.deletedAt)));
-    } catch (err: unknown) {
-      logger.error('Failed to query distinct metric types for baseline history refresh', {
+  // 1. Resolve and validate valueType
+  const valueType = await resolveMetricValueType(userId, metricType);
+  if (valueType !== 'numeric' && valueType !== 'duration') {
+    throw new ValidationError(
+      `Baseline history refresh is only supported for numeric or duration metrics, received '${valueType}'`,
+      {
         operation: 'refreshBaselineHistory',
         userId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      throw new DatabaseError(
-        'Failed to query metrics for baseline history refresh',
-        { operation: 'refreshBaselineHistory', userId },
-        err
-      );
-    }
+        metricType,
+        valueType,
+      }
+    );
   }
 
-  let metricsProcessed = 0;
+  // 2. Find earliest entry timestamp for this metric
+  let minStartRows: Array<{ minStart: Date | null }>;
+  try {
+    minStartRows = await db
+      .select({
+        minStart: sql`MIN(${metricEntries.startTime})`.mapWith((v) => (v ? new Date(v) : null)),
+      })
+      .from(metricEntries)
+      .where(
+        and(
+          eq(metricEntries.userId, userId),
+          eq(metricEntries.metricType, metricType),
+          isNull(metricEntries.deletedAt)
+        )
+      );
+  } catch (err: unknown) {
+    logger.error('Failed to query earliest metric entry for baseline history', {
+      operation: 'refreshBaselineHistory:earliest',
+      userId,
+      metricType,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw new DatabaseError(
+      'Failed to query earliest metric entry for baseline history',
+      { operation: 'refreshBaselineHistory:earliest', userId, metricType },
+      err
+    );
+  }
+
+  const earliestDate = minStartRows[0]?.minStart;
+  if (!earliestDate) {
+    logger.warn('No metric entries found for baseline history refresh', {
+      operation: 'refreshBaselineHistory:earliest',
+      userId,
+      metricType,
+    });
+    throw new NotFoundError(`No metric entries found for metric '${metricType}'`, {
+      operation: 'refreshBaselineHistory:earliest',
+      userId,
+      metricType,
+    });
+  }
+
   let snapshotsAdded = 0;
   let snapshotsSkippedExisting = 0;
   let snapshotsSkippedInsufficientData = 0;
   let hasMore = false;
   let evaluatedSnapshotsCount = 0;
-  const metricsSkippedNonApplicable: Array<{
-    metricType: string;
-    reason: 'non_applicable_type';
-    valueType: string;
-  }> = [];
 
-  for (const { metricType } of distinctMetricRows) {
-    if (evaluatedSnapshotsCount >= maxSnapshots) {
-      hasMore = true;
-      break;
-    }
+  const boundaries = getFullyElapsedMonthBoundaries(earliestDate, now);
 
-    const valueType = await resolveMetricValueType(userId, metricType);
-    if (valueType !== 'numeric' && valueType !== 'duration') {
-      metricsSkippedNonApplicable.push({
-        metricType,
-        reason: 'non_applicable_type',
-        valueType,
-      });
-      continue;
-    }
-
-    // Find earliest entry timestamp for this metric
-    let minStartRows: Array<{ minStart: Date | null }>;
-    try {
-      minStartRows = await db
-        .select({
-          minStart: sql`MIN(${metricEntries.startTime})`.mapWith((v) => (v ? new Date(v) : null)),
-        })
-        .from(metricEntries)
-        .where(
-          and(
-            eq(metricEntries.userId, userId),
-            eq(metricEntries.metricType, metricType),
-            isNull(metricEntries.deletedAt)
-          )
-        );
-    } catch (err: unknown) {
-      logger.error('Failed to query earliest metric entry for baseline history', {
-        operation: 'refreshBaselineHistory:earliest',
-        userId,
-        metricType,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      throw new DatabaseError(
-        'Failed to query earliest metric entry for baseline history',
-        { operation: 'refreshBaselineHistory:earliest', userId, metricType },
-        err
-      );
-    }
-
-    const earliestDate = minStartRows[0]?.minStart;
-    if (!earliestDate) continue;
-
-    metricsProcessed++;
-    const boundaries = getFullyElapsedMonthBoundaries(earliestDate, now);
-    if (boundaries.length === 0) continue;
-
+  if (boundaries.length > 0) {
     // Query already computed snapshots for this metric
     let existingRows: Array<{ computedAt: Date }>;
     try {
@@ -285,20 +259,17 @@ export async function refreshBaselineHistory(
   logger.info('Baseline history refresh completed', {
     operation: 'refreshBaselineHistory',
     userId,
-    metricsProcessed,
+    metricType,
     snapshotsAdded,
     snapshotsSkippedExisting,
     snapshotsSkippedInsufficientData,
-    nonApplicableCount: metricsSkippedNonApplicable.length,
     hasMore,
   });
 
   return {
-    metricsProcessed,
     snapshotsAdded,
     snapshotsSkippedExisting,
     snapshotsSkippedInsufficientData,
-    metricsSkippedNonApplicable,
     hasMore,
   };
 }

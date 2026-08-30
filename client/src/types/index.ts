@@ -182,14 +182,8 @@ export interface BaselineHistoryItem {
 }
 
 export interface BaselineHistoryRefreshSummary {
-  metricsProcessed: number;
   snapshotsAdded: number;
   snapshotsSkippedExisting: number;
   snapshotsSkippedInsufficientData: number;
-  metricsSkippedNonApplicable: Array<{
-    metricType: string;
-    reason: 'non_applicable_type';
-    valueType: string;
-  }>;
   hasMore: boolean;
 }

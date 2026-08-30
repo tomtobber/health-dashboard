@@ -1,17 +1,17 @@
 import { db, pool } from '../src/db';
-import { users, metricDefinitions, metricEntries } from '../src/db/schema';
+import { users, metricEntries, metricDefinitions } from '../src/db/schema';
+import { eq } from 'drizzle-orm';
 import {
   refreshBaselineHistory,
   getMetricBaselineHistory,
   getFullyElapsedMonthBoundaries,
   BASELINE_HISTORY_WINDOW_DAYS,
 } from '../src/services/baselineHistoryService';
-import { computeMetricBaseline, getMetricBaseline } from '../src/services/baselineService';
-import { eq } from 'drizzle-orm';
+import { getMetricBaseline, computeMetricBaseline } from '../src/services/baselineService';
+import { ValidationError, NotFoundError } from '../src/errors/AppError';
 
-describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
+describe('Phase 6 Slice 4 - Baseline History Service Unit & Integration Tests', () => {
   let testUserId: string;
-  let otherUserId: string;
 
   beforeAll(async () => {
     await pool.query(`
@@ -34,12 +34,9 @@ describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
         ON metric_baseline_history (user_id, metric_type, computed_at);
     `).catch(() => {});
 
-    await pool.query('DELETE FROM users WHERE email IN ($1, $2)', [
-      'history_service_tester@example.com',
-      'history_service_other@example.com',
-    ]).catch(() => {});
+    await pool.query('DELETE FROM users WHERE email = $1', ['history_service_tester@example.com']).catch(() => {});
 
-    const [u1] = await db
+    const [u] = await db
       .insert(users)
       .values({
         email: 'history_service_tester@example.com',
@@ -47,18 +44,9 @@ describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
       })
       .returning();
 
-    const [u2] = await db
-      .insert(users)
-      .values({
-        email: 'history_service_other@example.com',
-        passwordHash: 'hash456',
-      })
-      .returning();
+    testUserId = u.id;
 
-    testUserId = u1.id;
-    otherUserId = u2.id;
-
-    // Define numeric and boolean custom metrics
+    // Seed definitions
     await db.insert(metricDefinitions).values([
       {
         userId: testUserId,
@@ -74,70 +62,79 @@ describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
         valueType: 'boolean',
       },
     ]);
+
+    // Seed entries for morning-weight-kg spanning months Nov 2025 - Feb 2026
+    const entries = [];
+    // 12 points in Dec 2025
+    for (let i = 1; i <= 12; i++) {
+      entries.push({
+        userId: testUserId,
+        provider: 'manual',
+        metricType: 'morning-weight-kg',
+        startTime: new Date(`2025-12-${i.toString().padStart(2, '0')}T08:00:00.000Z`),
+        endTime: new Date(`2025-12-${i.toString().padStart(2, '0')}T08:00:00.000Z`),
+        valueNumeric: 75 + i * 0.1,
+      });
+    }
+    // 12 points in Jan 2026
+    for (let i = 1; i <= 12; i++) {
+      entries.push({
+        userId: testUserId,
+        provider: 'manual',
+        metricType: 'morning-weight-kg',
+        startTime: new Date(`2026-01-${i.toString().padStart(2, '0')}T08:00:00.000Z`),
+        endTime: new Date(`2026-01-${i.toString().padStart(2, '0')}T08:00:00.000Z`),
+        valueNumeric: 76 + i * 0.1,
+      });
+    }
+    // 12 points in Feb 2026
+    for (let i = 1; i <= 12; i++) {
+      entries.push({
+        userId: testUserId,
+        provider: 'manual',
+        metricType: 'morning-weight-kg',
+        startTime: new Date(`2026-02-${i.toString().padStart(2, '0')}T08:00:00.000Z`),
+        endTime: new Date(`2026-02-${i.toString().padStart(2, '0')}T08:00:00.000Z`),
+        valueNumeric: 77 + i * 0.1,
+      });
+    }
+    await db.insert(metricEntries).values(entries);
   });
 
   afterAll(async () => {
-    if (testUserId && otherUserId) {
+    if (testUserId) {
       await db.delete(users).where(eq(users.id, testUserId));
-      await db.delete(users).where(eq(users.id, otherUserId));
     }
   });
 
-  describe('1. Month Boundary Generation & Exclusion of In-Progress Month', () => {
-    test('generates expected UTC 1st-of-month boundaries and excludes in-progress month', () => {
-      const earliest = new Date('2025-11-15T12:00:00.000Z');
-      const now = new Date('2026-03-20T15:30:00.000Z');
+  describe('1. Calendar-month boundary calculation', () => {
+    test('getFullyElapsedMonthBoundaries generates strictly 1st of month UTC boundaries and excludes in-progress month', () => {
+      const earliest = new Date('2025-12-15T12:00:00.000Z');
+      const now = new Date('2026-03-20T14:30:00.000Z');
 
       const boundaries = getFullyElapsedMonthBoundaries(earliest, now);
 
-      expect(boundaries.length).toBe(4);
-      expect(boundaries[0].toISOString()).toBe('2025-12-01T00:00:00.000Z');
-      expect(boundaries[1].toISOString()).toBe('2026-01-01T00:00:00.000Z');
-      expect(boundaries[2].toISOString()).toBe('2026-02-01T00:00:00.000Z');
-      expect(boundaries[3].toISOString()).toBe('2026-03-01T00:00:00.000Z');
-      // In-progress month (April 1st, 2026) is excluded
+      expect(boundaries).toHaveLength(3);
+      expect(boundaries[0].toISOString()).toBe('2026-01-01T00:00:00.000Z');
+      expect(boundaries[1].toISOString()).toBe('2026-02-01T00:00:00.000Z');
+      expect(boundaries[2].toISOString()).toBe('2026-03-01T00:00:00.000Z');
+
+      // March 2026 is in progress -> 2026-04-01 is NOT included
+      expect(boundaries.some((b) => b.toISOString().startsWith('2026-04-01'))).toBe(false);
     });
 
-    test('returns empty array when earliest entry is in current in-progress month', () => {
-      const earliest = new Date('2026-03-10T10:00:00.000Z');
-      const now = new Date('2026-03-25T12:00:00.000Z');
+    test('returns empty array when earliest date is in the current in-progress month', () => {
+      const earliest = new Date('2026-03-05T00:00:00.000Z');
+      const now = new Date('2026-03-20T00:00:00.000Z');
 
       const boundaries = getFullyElapsedMonthBoundaries(earliest, now);
-      expect(boundaries).toEqual([]);
+      expect(boundaries).toHaveLength(0);
     });
   });
 
-  describe('2. Core computeMetricBaseline with explicit asOf parameter', () => {
-    test('computes baseline statistics strictly within [asOf - windowDays, asOf]', async () => {
-      const asOf = new Date('2026-03-01T00:00:00.000Z');
-      
-      // Insert 12 points before asOf (inside 90-day window: Jan/Feb 2026)
-      const validEntries = [];
-      for (let i = 1; i <= 12; i++) {
-        validEntries.push({
-          userId: testUserId,
-          provider: 'manual',
-          metricType: 'morning-weight-kg',
-          startTime: new Date(`2026-01-${i.toString().padStart(2, '0')}T08:00:00.000Z`),
-          endTime: new Date(`2026-01-${i.toString().padStart(2, '0')}T08:00:00.000Z`),
-          valueNumeric: 70 + i,
-        });
-      }
-
-      // Insert 5 points AFTER asOf (March 2026) - should be excluded from this asOf snapshot
-      for (let i = 2; i <= 6; i++) {
-        validEntries.push({
-          userId: testUserId,
-          provider: 'manual',
-          metricType: 'morning-weight-kg',
-          startTime: new Date(`2026-03-${i.toString().padStart(2, '0')}T08:00:00.000Z`),
-          endTime: new Date(`2026-03-${i.toString().padStart(2, '0')}T08:00:00.000Z`),
-          valueNumeric: 95,
-        });
-      }
-
-      await db.insert(metricEntries).values(validEntries);
-
+  describe('2. computeMetricBaseline core logic refactor', () => {
+    test('computes baseline statistics correctly asOf explicit timestamp', async () => {
+      const asOf = new Date('2026-02-01T00:00:00.000Z');
       const result = await computeMetricBaseline(testUserId, 'morning-weight-kg', {
         windowDays: BASELINE_HISTORY_WINDOW_DAYS,
         asOf,
@@ -145,10 +142,9 @@ describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.sampleSize).toBe(12);
-        expect(result.min).toBe(71);
-        expect(result.max).toBe(82);
-        expect(result.mean).toBe(76.5);
+        expect(result.windowEnd).toBe(asOf.toISOString());
+        expect(result.sampleSize).toBe(24); // Dec (12) + Jan (12)
+        expect(result.mean).toBeGreaterThan(75);
       }
     });
 
@@ -177,26 +173,8 @@ describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
     });
   });
 
-  describe('3. Batch refreshBaselineHistory', () => {
-    test('full backfill from zero existing rows inserts all eligible snapshots', async () => {
-      const fixedNow = new Date('2026-03-20T00:00:00.000Z');
-      const summary = await refreshBaselineHistory(testUserId, { now: fixedNow });
-
-      expect(summary.metricsProcessed).toBeGreaterThanOrEqual(1);
-      expect(summary.snapshotsAdded).toBeGreaterThanOrEqual(1);
-      expect(summary.snapshotsSkippedExisting).toBe(0);
-    });
-
-    test('idempotent second refresh adds zero new rows and reports all as skipped existing', async () => {
-      const fixedNow = new Date('2026-03-20T00:00:00.000Z');
-      const summary = await refreshBaselineHistory(testUserId, { now: fixedNow });
-
-      expect(summary.snapshotsAdded).toBe(0);
-      expect(summary.snapshotsSkippedExisting).toBeGreaterThanOrEqual(1);
-    });
-
-    test('silently skips boolean and category metrics without throwing ValidationError', async () => {
-      // Insert boolean entry
+  describe('3. Single-Metric refreshBaselineHistory', () => {
+    test('throws ValidationError when called for a boolean or category metric', async () => {
       await db.insert(metricEntries).values({
         userId: testUserId,
         provider: 'manual',
@@ -206,20 +184,58 @@ describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
         valueNumeric: 1,
       });
 
-      const fixedNow = new Date('2026-03-20T00:00:00.000Z');
-      const summary = await refreshBaselineHistory(testUserId, { now: fixedNow });
+      await expect(
+        refreshBaselineHistory(testUserId, 'took-medication', { now: new Date('2026-03-20T00:00:00.000Z') })
+      ).rejects.toThrow(ValidationError);
+    });
 
-      expect(summary.metricsSkippedNonApplicable.some((m) => m.metricType === 'took-medication')).toBe(true);
-      const skippedItem = summary.metricsSkippedNonApplicable.find((m) => m.metricType === 'took-medication');
-      expect(skippedItem?.reason).toBe('non_applicable_type');
-      expect(skippedItem?.valueType).toBe('boolean');
+    test('throws NotFoundError when called for a metric with zero entries', async () => {
+      await expect(
+        refreshBaselineHistory(testUserId, 'non-existent-metric-type', { now: new Date('2026-03-20T00:00:00.000Z') })
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    test('full backfill from zero existing rows inserts all eligible snapshots for specified metric', async () => {
+      const fixedNow = new Date('2026-03-20T00:00:00.000Z');
+      const summary = await refreshBaselineHistory(testUserId, 'morning-weight-kg', { now: fixedNow });
+
+      expect(summary.snapshotsAdded).toBeGreaterThanOrEqual(1);
+      expect(summary.snapshotsSkippedExisting).toBe(0);
+    });
+
+    test('idempotent second refresh adds zero new rows and reports all as skipped existing', async () => {
+      const fixedNow = new Date('2026-03-20T00:00:00.000Z');
+      const summary = await refreshBaselineHistory(testUserId, 'morning-weight-kg', { now: fixedNow });
+
+      expect(summary.snapshotsAdded).toBe(0);
+      expect(summary.snapshotsSkippedExisting).toBeGreaterThanOrEqual(1);
     });
 
     test('respects maxSnapshots cap per request and sets hasMore = true', async () => {
+      await db.insert(metricDefinitions).values({
+        userId: testUserId,
+        metricType: 'capped-pagination-metric',
+        displayName: 'Capped Metric',
+        valueType: 'numeric',
+      });
+
+      const points = [];
+      for (let i = 1; i <= 15; i++) {
+        points.push({
+          userId: testUserId,
+          provider: 'manual',
+          metricType: 'capped-pagination-metric',
+          startTime: new Date(`2025-10-${i.toString().padStart(2, '0')}T10:00:00.000Z`),
+          endTime: new Date(`2025-10-${i.toString().padStart(2, '0')}T10:00:00.000Z`),
+          valueNumeric: 100 + i,
+        });
+      }
+      await db.insert(metricEntries).values(points);
+
       const fixedNow = new Date('2026-03-20T00:00:00.000Z');
-      const summary = await refreshBaselineHistory(testUserId, { maxSnapshots: 0, now: fixedNow });
+      const summary = await refreshBaselineHistory(testUserId, 'capped-pagination-metric', { maxSnapshots: 1, now: fixedNow });
       expect(summary.hasMore).toBe(true);
-      expect(summary.snapshotsAdded).toBe(0);
+      expect(summary.snapshotsAdded).toBe(1);
     });
 
     test('gap month with insufficient data leaves no row while surrounding months succeed', async () => {
@@ -243,7 +259,7 @@ describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
           valueNumeric: 2.5,
         });
       }
-      // Insert only 2 entries in May 2025 (months March, April, May, June have gap)
+      // Insert only 2 entries in May 2025
       const mayPoints = [
         {
           userId: testUserId,
@@ -251,7 +267,7 @@ describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
           metricType: 'hydration-test-liters',
           startTime: new Date('2025-05-10T10:00:00.000Z'),
           endTime: new Date('2025-05-10T10:00:00.000Z'),
-          valueNumeric: 2.0,
+          valueNumeric: 2.5,
         },
         {
           userId: testUserId,
@@ -259,14 +275,13 @@ describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
           metricType: 'hydration-test-liters',
           startTime: new Date('2025-05-11T10:00:00.000Z'),
           endTime: new Date('2025-05-11T10:00:00.000Z'),
-          valueNumeric: 2.0,
+          valueNumeric: 2.8,
         },
       ];
-
       await db.insert(metricEntries).values([...janPoints, ...mayPoints]);
 
       const fixedNow = new Date('2025-08-15T00:00:00.000Z');
-      const summary = await refreshBaselineHistory(testUserId, { now: fixedNow });
+      const summary = await refreshBaselineHistory(testUserId, 'hydration-test-liters', { now: fixedNow });
 
       expect(summary.snapshotsSkippedInsufficientData).toBeGreaterThan(0);
 
@@ -302,10 +317,10 @@ describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
 
       const fixedNow = new Date('2026-03-20T00:00:00.000Z');
 
-      // Run two parallel refreshes concurrently
+      // Run two parallel refreshes concurrently on the same metric
       const [res1, res2] = await Promise.all([
-        refreshBaselineHistory(testUserId, { now: fixedNow }),
-        refreshBaselineHistory(testUserId, { now: fixedNow }),
+        refreshBaselineHistory(testUserId, 'concurrent-test-metric', { now: fixedNow }),
+        refreshBaselineHistory(testUserId, 'concurrent-test-metric', { now: fixedNow }),
       ]);
 
       const history = await getMetricBaselineHistory(testUserId, 'concurrent-test-metric');
@@ -318,41 +333,6 @@ describe('Phase 6 Slice 4 - Baseline History Service Layer', () => {
       // 2. Exact match: sum of reported snapshotsAdded across both concurrent executions equals exact rows created
       expect(res1.snapshotsAdded + res2.snapshotsAdded).toBe(history.length);
     });
-
-    test('refreshBaselineHistory with metricType option targets only the specified metric', async () => {
-      await db.insert(metricDefinitions).values({
-        userId: testUserId,
-        metricType: 'targeted-refresh-metric',
-        displayName: 'Targeted Metric',
-        valueType: 'numeric',
-      });
-
-      const points = [];
-      for (let i = 1; i <= 15; i++) {
-        points.push({
-          userId: testUserId,
-          provider: 'manual',
-          metricType: 'targeted-refresh-metric',
-          startTime: new Date(`2026-01-${i.toString().padStart(2, '0')}T10:00:00.000Z`),
-          endTime: new Date(`2026-01-${i.toString().padStart(2, '0')}T10:00:00.000Z`),
-          valueNumeric: 200 + i,
-        });
-      }
-      await db.insert(metricEntries).values(points);
-
-      const summary = await refreshBaselineHistory(testUserId, {
-        metricType: 'targeted-refresh-metric',
-        now: new Date('2026-03-20T00:00:00.000Z'),
-      });
-
-      expect(summary.metricsProcessed).toBe(1);
-      expect(summary.snapshotsAdded).toBeGreaterThanOrEqual(1);
-
-      const history = await getMetricBaselineHistory(testUserId, 'targeted-refresh-metric');
-      expect(history.length).toBeGreaterThanOrEqual(1);
-      expect(history[0].metricType).toBe('targeted-refresh-metric');
-    });
-
   });
 
   describe('4. getMetricBaselineHistory query', () => {

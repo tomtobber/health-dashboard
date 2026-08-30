@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { app } from '../src/app';
 import { db, pool } from '../src/db';
-import { users, metricEntries } from '../src/db/schema';
+import { users, metricEntries, metricDefinitions } from '../src/db/schema';
 import jwt from 'jsonwebtoken';
 import { eq } from 'drizzle-orm';
 
@@ -57,6 +57,22 @@ describe('Phase 6 Slice 4 - Baseline History HTTP Routes', () => {
       });
     }
     await db.insert(metricEntries).values(points);
+
+    // Custom boolean metric
+    await db.insert(metricDefinitions).values({
+      userId: testUserId,
+      metricType: 'route-boolean-metric',
+      displayName: 'Route Boolean',
+      valueType: 'boolean',
+    });
+    await db.insert(metricEntries).values({
+      userId: testUserId,
+      provider: 'manual',
+      metricType: 'route-boolean-metric',
+      startTime: new Date('2026-01-10T10:00:00.000Z'),
+      endTime: new Date('2026-01-10T10:00:00.000Z'),
+      valueNumeric: 1,
+    });
   });
 
   afterAll(async () => {
@@ -65,43 +81,42 @@ describe('Phase 6 Slice 4 - Baseline History HTTP Routes', () => {
     }
   });
 
-  describe('POST /api/metrics/baseline-history/refresh', () => {
-    test('requires authentication', async () => {
-      const res = await request(app).post('/api/metrics/baseline-history/refresh');
-      expect(res.status).toBe(401);
-    });
-
-    test('successfully generates snapshots and returns summary', async () => {
-      const res = await request(app)
-        .post('/api/metrics/baseline-history/refresh')
-        .set('Authorization', `Bearer ${authToken}`);
-
-      expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty('metricsProcessed');
-      expect(res.body).toHaveProperty('snapshotsAdded');
-      expect(res.body).toHaveProperty('snapshotsSkippedExisting');
-      expect(res.body).toHaveProperty('snapshotsSkippedInsufficientData');
-      expect(res.body).toHaveProperty('metricsSkippedNonApplicable');
-      expect(res.body).toHaveProperty('hasMore');
-    });
-  });
-
-
   describe('POST /api/metrics/:metricType/baseline-history/refresh', () => {
     test('requires authentication', async () => {
       const res = await request(app).post('/api/metrics/daily-steps-count/baseline-history/refresh');
       expect(res.status).toBe(401);
     });
 
-    test('successfully generates snapshots for the specified metric only', async () => {
+    test('returns 404 NotFoundError for non-existent metric or zero entries', async () => {
+      const res = await request(app)
+        .post('/api/metrics/non-existent-metric/baseline-history/refresh')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(res.status).toBe(404);
+      expect(res.body).toHaveProperty('code', 'NOT_FOUND_ERROR');
+    });
+
+    test('returns 400 ValidationError for boolean or category metric', async () => {
+      const res = await request(app)
+        .post('/api/metrics/route-boolean-metric/baseline-history/refresh')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(res.status).toBe(400);
+      expect(res.body).toHaveProperty('code', 'VALIDATION_ERROR');
+    });
+
+    test('successfully generates snapshots for the specified metric and returns summary', async () => {
       const res = await request(app)
         .post('/api/metrics/daily-steps-count/baseline-history/refresh')
         .set('Authorization', `Bearer ${authToken}`);
 
       expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty('metricsProcessed');
       expect(res.body).toHaveProperty('snapshotsAdded');
+      expect(res.body).toHaveProperty('snapshotsSkippedExisting');
+      expect(res.body).toHaveProperty('snapshotsSkippedInsufficientData');
       expect(res.body).toHaveProperty('hasMore');
+      expect(res.body).not.toHaveProperty('metricsProcessed');
+      expect(res.body).not.toHaveProperty('metricsSkippedNonApplicable');
     });
   });
 
