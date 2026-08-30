@@ -41,16 +41,23 @@ export function normalizeDashboardViewConfig(rawConfig: unknown): DashboardViewC
   if (parsed.success) {
     return parsed.data;
   }
-  if (rawConfig && typeof rawConfig === 'object' && 'panels' in rawConfig && Array.isArray((rawConfig as any).panels)) {
+  if (
+    rawConfig &&
+    typeof rawConfig === 'object' &&
+    'panels' in rawConfig &&
+    Array.isArray((rawConfig as Record<string, unknown>).panels)
+  ) {
+    const rawPanels = (rawConfig as Record<string, unknown>).panels as unknown[];
     return {
-      panels: (rawConfig as any).panels.map((p: any) => {
-        if (p && p.panelType === 'baseline') {
-          return p as DashboardPanelConfig;
+      panels: rawPanels.map((p) => {
+        const panelObj = (p && typeof p === 'object' ? p : {}) as Record<string, unknown>;
+        if (panelObj.panelType === 'baseline') {
+          return panelObj as unknown as DashboardPanelConfig;
         }
         return {
           panelType: 'chart',
-          ...p,
-        } as DashboardPanelConfig;
+          ...panelObj,
+        } as unknown as DashboardPanelConfig;
       }),
     };
   }
