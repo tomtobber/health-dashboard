@@ -72,3 +72,12 @@ Before presenting a diff as finished, check it against sections 1–9 above and 
 `RECURRING_MISTAKES.md` in the repo root. List anything you find, fix it, then present
 the revised diff — don't present the checklist results as a caveat instead of fixing
 the code.
+
+## 11. EXPLANATION VS. MODIFICATION ARE SEPARATE STEPS
+- If the user asks to explain, investigate, diagnose, or understand why
+  something happens, do NOT modify any files. Answer in prose only.
+- Only make code changes when the user explicitly asks for a fix, change,
+  or implementation — a question is not that, even if the answer reveals
+  an obvious bug.
+- If you believe something should be fixed while answering a question,
+  say so explicitly and ask before touching any file.
