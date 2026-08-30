@@ -465,9 +465,14 @@ Persist point-in-time monthly baseline snapshots for numeric and duration metric
 
 ### Endpoints
 
+- `POST /api/metrics/:metricType/baseline-history/refresh`
+  - Auth: required
+  - Scopes generation exclusively to `:metricType`.
+  - Returns: `BaselineHistoryRefreshSummary` (`metricsProcessed`, `snapshotsAdded`, `snapshotsSkippedExisting`, `snapshotsSkippedInsufficientData`, `metricsSkippedNonApplicable`, `hasMore`)
 - `POST /api/metrics/baseline-history/refresh`
   - Auth: required
-  - Returns: `BaselineHistoryRefreshSummary` (`metricsProcessed`, `snapshotsAdded`, `snapshotsSkippedExisting`, `snapshotsSkippedInsufficientData`, `metricsSkippedNonApplicable`, `hasMore`)
+  - Optional `metricType` query or body parameter. When omitted, refreshes across all eligible account metrics in bounded chunks of 50.
+  - Returns: `BaselineHistoryRefreshSummary`
 - `GET /api/metrics/:metricType/baseline-history?startTime=&endTime=`
   - Auth: required
   - Validates ISO datetime range
@@ -485,7 +490,7 @@ When wiring the "Refresh Baseline History" action in the UI:
    const MAX_CLIENT_ITERATIONS = 20; // Safeguard
 
    while (hasMore && iterations < MAX_CLIENT_ITERATIONS) {
-     const summary = await api.refreshBaselineHistory();
+     const summary = await api.refreshBaselineHistory(panel.metricType);
      cumulativeAdded += summary.snapshotsAdded;
      hasMore = summary.hasMore;
      iterations++;

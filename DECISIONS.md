@@ -421,3 +421,9 @@ Baseline panels display detailed point-in-time statistics, observed ranges, and 
 ### Why the old modal and its entry points were removed rather than kept alongside the panel
 
 The old `BaselineModal.tsx` popup only showed a static live snapshot with no visual timeline or history progression, which was the core reason Slice 4 was created. Retaining both the modal and the persistent dashboard panel would introduce redundant, overlapping UI surfaces with divergent capabilities. Removing the modal centralizes baseline monitoring directly onto the customizable dashboard canvas.
+
+### Why baseline history refresh supports a targeted per-metric endpoint
+
+The initial Slice 4 backend design provided only an account-wide refresh endpoint (`POST /api/metrics/baseline-history/refresh`) that iterated all distinct metrics in arbitrary database order, capped at 50 snapshots per request. When triggered from a single-metric `BaselinePanel`, an account with multiple metrics spanning 1+ years exhausted the global 50-snapshot request budget on earlier metrics before reaching the metric displayed on the active panel. 
+
+The refresh architecture was therefore enhanced to support targeted per-metric execution via `POST /api/metrics/:metricType/baseline-history/refresh` (and `POST /api/metrics/baseline-history/refresh?metricType=...`). When a `metricType` is provided, the backend scopes snapshot evaluation exclusively to that single metric, dedicating the entire 50-snapshot per-request budget to that metric's history. The panel button derives its target directly from `panel.metricType` and executes a client-side `while (hasMore)` loop until that specific metric's historical snapshots are complete.
