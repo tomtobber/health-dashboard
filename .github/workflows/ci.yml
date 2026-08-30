@@ -53,7 +53,7 @@ jobs:
         env:
           NODE_ENV: test
       - run: npm ci
-      - run: npm run typecheck
+      - run: npm run typecheck:all
 
   test:
     name: Tests

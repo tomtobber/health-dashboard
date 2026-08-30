@@ -25,7 +25,6 @@ function formatTimestampSafely(val?: string | number | Date | null, fmt = 'PPP p
 import React, { useEffect, useState, useMemo } from 'react';
 import {
   ChartPanelConfig,
-  DashboardPanelConfig,
   EnrichedMetricQueryResult,
 } from '../types';
 import { api } from '../services/api';
@@ -230,25 +229,7 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
                 {m.displayName} {m.unit ? `(${m.unit})` : ''}
                 {m.isArchived && ' [Archived]'}
               </span>
-              {onOpenBaseline && (m.valueType === 'numeric' || m.valueType === 'duration') && (
-                <button
-                  type="button"
-                  onClick={() => onOpenBaseline(m.metricType, m.displayName)}
-                  title="View Historical Baseline"
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    color: 'currentColor',
-                    cursor: 'pointer',
-                    fontSize: '0.6875rem',
-                    textDecoration: 'underline',
-                    padding: '0 2px',
-                    opacity: 0.85,
-                  }}
-                >
-                  Baseline
-                </button>
-              )}
+
             </span>
           ))}
           {data.length === 0 && !loading && (

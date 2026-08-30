@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { BaselinePanelConfig, BaselineResult, BaselineHistoryItem } from '../../types';
 import { api } from '../../services/api';
-import { getCanonicalProviderMetricMetadata } from '../../adapters/baseAdapter';
+import { ALL_CANONICAL_METRICS } from '../PanelConfigModal';
 import {
   ResponsiveContainer,
   LineChart,
@@ -12,7 +12,7 @@ import {
   CartesianGrid,
 } from 'recharts';
 import { format, parseISO } from 'date-fns';
-import { Settings, Trash2, RefreshCw, Activity, AlertCircle, CheckCircle2, Info } from 'lucide-react';
+import { Settings, Trash2, RefreshCw, Activity, AlertCircle, Info } from 'lucide-react';
 
 interface BaselinePanelProps {
   panel: BaselinePanelConfig;
@@ -103,8 +103,9 @@ export const BaselinePanel: React.FC<BaselinePanelProps> = ({
     }
   };
 
-  const canonical = getCanonicalProviderMetricMetadata(panel.metricType);
-  const displayName = (baseline && baseline.displayName) || canonical.displayName || panel.metricType;
+  const canonical = ALL_CANONICAL_METRICS.find((m) => m.metricType === panel.metricType);
+  const displayName = (baseline && baseline.displayName) || (canonical && canonical.displayName) || panel.metricType;
+  const unit = (baseline && 'unit' in baseline && baseline.unit) || (canonical && canonical.unit) || '';
 
   // Format history data for recharts
   const chartData = history.map((item) => {
@@ -260,7 +261,7 @@ export const BaselinePanel: React.FC<BaselinePanelProps> = ({
                                 {pt.dateLabel}
                               </div>
                               <div style={{ color: 'var(--accent-primary)' }}>
-                                Baseline Mean: {pt.mean} {canonical.unit || ''}
+                                Baseline Mean: {pt.mean} {unit}
                               </div>
                               <div style={{ color: 'var(--text-secondary)' }}>
                                 Std Dev: ±{pt.stddev}
