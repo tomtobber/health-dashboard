@@ -420,5 +420,46 @@ describe('Phase 5 - Dashboard Views & Multi-Metric Config', () => {
       expect(res.body.dashboardView.config.panels[0].metricType).toBe('daily-resting-heart-rate');
       expect(res.body.dashboardView.config.panels[1].panelType).toBe('chart');
     });
+
+    test('backward compatibility: directly seeded legacy view without panelType parses and returns as chart panel', async () => {
+      // 1. Insert directly into postgres with raw JSONB missing panelType
+      const rawRes = await pool.query(
+        `INSERT INTO dashboard_views (user_id, name, config)
+         VALUES ($1, $2, $3)
+         RETURNING id, config`,
+        [
+          testUserId,
+          'Raw Legacy View Without Discriminator',
+          JSON.stringify({
+            panels: [
+              {
+                id: 'raw-legacy-panel',
+                metricTypes: ['heart-rate', 'steps'],
+                timeRange: { type: 'relative', value: 'last_7d' },
+                aggregation: 'raw',
+              },
+            ],
+          }),
+        ]
+      );
+
+      const legacyId = rawRes.rows[0].id;
+
+      // 2. Service level retrieval
+      const serviceView = await getDashboardView(legacyId, testUserId);
+      expect(serviceView.name).toBe('Raw Legacy View Without Discriminator');
+      expect(serviceView.config.panels).toHaveLength(1);
+      expect((serviceView.config.panels[0] as ChartPanelConfig).panelType).toBe('chart');
+      expect((serviceView.config.panels[0] as ChartPanelConfig).metricTypes).toEqual(['heart-rate', 'steps']);
+
+      // 3. HTTP API level retrieval
+      const httpRes = await request(app)
+        .get(`/api/dashboard-views/${legacyId}`)
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(httpRes.status).toBe(200);
+      expect(httpRes.body.dashboardView.config.panels[0].panelType).toBe('chart');
+      expect(httpRes.body.dashboardView.config.panels[0].metricTypes).toEqual(['heart-rate', 'steps']);
+    });
   });
 });

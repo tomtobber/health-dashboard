@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { db } from '../db';
-import { dashboardViews, DashboardViewConfig } from '../db/schema';
+import { dashboardViews, DashboardViewConfig, DashboardPanelConfig } from '../db/schema';
 import { and, eq } from 'drizzle-orm';
 import { ValidationError, NotFoundError, DatabaseError } from '../errors/AppError';
 import { logger } from '../utils/logger';
@@ -34,6 +34,28 @@ export const PanelConfigSchema = z.union([
   BaselinePanelConfigSchema,
   ChartPanelConfigSchema,
 ]);
+
+
+export function normalizeDashboardViewConfig(rawConfig: unknown): DashboardViewConfig {
+  const parsed = DashboardViewConfigSchema.safeParse(rawConfig);
+  if (parsed.success) {
+    return parsed.data;
+  }
+  if (rawConfig && typeof rawConfig === 'object' && 'panels' in rawConfig && Array.isArray((rawConfig as any).panels)) {
+    return {
+      panels: (rawConfig as any).panels.map((p: any) => {
+        if (p && p.panelType === 'baseline') {
+          return p as DashboardPanelConfig;
+        }
+        return {
+          panelType: 'chart',
+          ...p,
+        } as DashboardPanelConfig;
+      }),
+    };
+  }
+  return { panels: [] };
+}
 
 export const DashboardViewConfigSchema = z.object({
   panels: z.array(PanelConfigSchema).min(1, 'At least one panel is required'),
@@ -149,7 +171,7 @@ export async function listDashboardViews(userId: string): Promise<DashboardViewR
       id: r.id,
       userId: r.userId,
       name: r.name,
-      config: r.config,
+      config: normalizeDashboardViewConfig(r.config),
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     }));
@@ -186,7 +208,7 @@ export async function getDashboardView(id: string, userId: string): Promise<Dash
       id: view.id,
       userId: view.userId,
       name: view.name,
-      config: view.config,
+      config: normalizeDashboardViewConfig(view.config),
       createdAt: view.createdAt,
       updatedAt: view.updatedAt,
     };
@@ -260,7 +282,7 @@ export async function updateDashboardView(
       id: updated.id,
       userId: updated.userId,
       name: updated.name,
-      config: updated.config,
+      config: normalizeDashboardViewConfig(updated.config),
       createdAt: updated.createdAt,
       updatedAt: updated.updatedAt,
     };
