@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { DashboardPanelConfig, MetricDefinition, TimeRange } from '../types';
-import { X, Check, Search } from 'lucide-react';
+import { X, Check, Search, BarChart3, Activity } from 'lucide-react';
 
 interface PanelConfigModalProps {
   panel: DashboardPanelConfig | null;
@@ -63,23 +63,33 @@ export const PanelConfigModal: React.FC<PanelConfigModalProps> = ({
   onSave,
   onClose,
 }) => {
-  const [selectedMetrics, setSelectedMetrics] = useState<string[]>(panel ? panel.metricTypes : ['heart-rate']);
+  const initialPanelType = panel && 'panelType' in panel && panel.panelType === 'baseline' ? 'baseline' : 'chart';
+  const [panelType, setPanelType] = useState<'chart' | 'baseline'>(initialPanelType);
+
+  const initialChartMetrics = panel && (!('panelType' in panel) || panel.panelType === 'chart') ? panel.metricTypes : ['heart-rate'];
+  const [selectedMetrics, setSelectedMetrics] = useState<string[]>(initialChartMetrics);
+
+  const initialBaselineMetric = panel && 'panelType' in panel && panel.panelType === 'baseline' ? panel.metricType : 'heart-rate';
+  const [selectedBaselineMetric, setSelectedBaselineMetric] = useState<string>(initialBaselineMetric);
+
   const [activeCategory, setActiveCategory] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [rangeType, setRangeType] = useState<'relative' | 'absolute'>(panel ? panel.timeRange.type : 'relative');
+
+  const chartPanel = panel && (!('panelType' in panel) || panel.panelType === 'chart') ? panel : null;
+  const [rangeType, setRangeType] = useState<'relative' | 'absolute'>(chartPanel ? chartPanel.timeRange.type : 'relative');
   const [relativeValue, setRelativeValue] = useState<'last_24h' | 'last_7d' | 'last_30d' | 'last_90d' | 'last_1y'>(
-    panel && panel.timeRange.type === 'relative' ? panel.timeRange.value : 'last_7d'
+    chartPanel && chartPanel.timeRange.type === 'relative' ? chartPanel.timeRange.value : 'last_7d'
   );
   const [startTime, setStartTime] = useState<string>(
-    panel && panel.timeRange.type === 'absolute' ? panel.timeRange.startTime.slice(0, 10) : ''
+    chartPanel && chartPanel.timeRange.type === 'absolute' ? chartPanel.timeRange.startTime.slice(0, 10) : ''
   );
   const [endTime, setEndTime] = useState<string>(
-    panel && panel.timeRange.type === 'absolute' ? panel.timeRange.endTime.slice(0, 10) : ''
+    chartPanel && chartPanel.timeRange.type === 'absolute' ? chartPanel.timeRange.endTime.slice(0, 10) : ''
   );
   const [aggregation, setAggregation] = useState<'raw' | '1m_avg' | '5m_avg' | 'daily_avg' | 'weekly_avg'>(
-    panel ? panel.aggregation : 'weekly_avg'
+    chartPanel ? chartPanel.aggregation : 'weekly_avg'
   );
-  const [chartType, setChartType] = useState<'line' | 'bar'>(panel?.chartType || 'line');
+  const [chartType, setChartType] = useState<'line' | 'bar'>(chartPanel?.chartType || 'line');
 
   const toggleMetric = (key: string) => {
     if (selectedMetrics.includes(key)) {
@@ -93,6 +103,17 @@ export const PanelConfigModal: React.FC<PanelConfigModalProps> = ({
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (panelType === 'baseline') {
+      if (!selectedBaselineMetric) return;
+      onSave({
+        id: panel ? panel.id : `panel-${Date.now()}`,
+        panelType: 'baseline',
+        metricType: selectedBaselineMetric,
+      });
+      return;
+    }
+
     if (selectedMetrics.length === 0) return;
 
     let timeRange: TimeRange;
@@ -108,6 +129,7 @@ export const PanelConfigModal: React.FC<PanelConfigModalProps> = ({
 
     onSave({
       id: panel ? panel.id : `panel-${Date.now()}`,
+      panelType: 'chart',
       metricTypes: selectedMetrics,
       timeRange,
       aggregation,
@@ -137,6 +159,11 @@ export const PanelConfigModal: React.FC<PanelConfigModalProps> = ({
 
   const filteredCatalog = useMemo(() => {
     return fullCatalog.filter((item) => {
+      // For baseline panels, filter strictly to numeric and duration metrics
+      if (panelType === 'baseline' && item.type !== 'numeric' && item.type !== 'duration') {
+        return false;
+      }
+
       const matchesCategory = activeCategory === 'All' || item.category === activeCategory;
       const matchesSearch =
         searchQuery === '' ||
@@ -144,24 +171,80 @@ export const PanelConfigModal: React.FC<PanelConfigModalProps> = ({
         item.metricType.toLowerCase().includes(searchQuery.toLowerCase());
       return matchesCategory && matchesSearch;
     });
-  }, [fullCatalog, activeCategory, searchQuery]);
+  }, [fullCatalog, activeCategory, searchQuery, panelType]);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '640px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-          <h2>{panel ? 'Configure Multi-Metric Panel' : 'Add Multi-Metric Panel'}</h2>
+          <h2>{panel ? 'Configure Panel' : 'Add Dashboard Panel'}</h2>
           <button className="btn btn-secondary btn-icon" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
 
         <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          {/* Multi-Metric Selection Catalog */}
+          {/* Panel Type Selector */}
+          <div>
+            <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.5rem' }}>
+              Panel Type:
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setPanelType('chart')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '0.5rem',
+                  padding: '0.75rem',
+                  borderRadius: '8px',
+                  border: '1px solid',
+                  borderColor: panelType === 'chart' ? 'var(--accent-primary)' : 'var(--border-color)',
+                  background: panelType === 'chart' ? 'rgba(99,102,241,0.15)' : 'var(--bg-card-header)',
+                  color: panelType === 'chart' ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                  fontWeight: panelType === 'chart' ? 600 : 400,
+                  cursor: 'pointer',
+                }}
+              >
+                <BarChart3 size={18} />
+                <span>Chart</span>
+              </button>
+
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setPanelType('baseline')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '0.5rem',
+                  padding: '0.75rem',
+                  borderRadius: '8px',
+                  border: '1px solid',
+                  borderColor: panelType === 'baseline' ? 'var(--accent-primary)' : 'var(--border-color)',
+                  background: panelType === 'baseline' ? 'rgba(99,102,241,0.15)' : 'var(--bg-card-header)',
+                  color: panelType === 'baseline' ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                  fontWeight: panelType === 'baseline' ? 600 : 400,
+                  cursor: 'pointer',
+                }}
+              >
+                <Activity size={18} />
+                <span>Personal Baseline</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Metric Selection Catalog */}
           <div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
               <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                Select Metrics ({selectedMetrics.length} selected):
+                {panelType === 'baseline'
+                  ? 'Select Metric (numeric & duration only):'
+                  : `Select Metrics (${selectedMetrics.length} selected):`}
               </label>
               <div style={{ position: 'relative', width: '180px' }}>
                 <Search size={13} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
@@ -185,11 +268,11 @@ export const PanelConfigModal: React.FC<PanelConfigModalProps> = ({
                   onClick={() => setActiveCategory(cat)}
                   style={{
                     fontSize: '0.6875rem',
-                    padding: '0.2rem 0.5rem',
+                    padding: '3px 8px',
                     borderRadius: '6px',
                     border: '1px solid',
-                    borderColor: activeCategory === cat ? 'var(--accent-primary)' : 'var(--border-subtle)',
-                    background: activeCategory === cat ? 'rgba(59,130,246,0.15)' : 'transparent',
+                    borderColor: activeCategory === cat ? 'var(--accent-primary)' : 'transparent',
+                    background: activeCategory === cat ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.04)',
                     color: activeCategory === cat ? 'var(--accent-primary)' : 'var(--text-muted)',
                     cursor: 'pointer',
                     whiteSpace: 'nowrap',
@@ -200,132 +283,175 @@ export const PanelConfigModal: React.FC<PanelConfigModalProps> = ({
               ))}
             </div>
 
-            {/* Metric pill list */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem', maxHeight: '180px', overflowY: 'auto', padding: '0.5rem', background: 'rgba(15,23,42,0.6)', borderRadius: '10px', border: '1px solid var(--border-subtle)' }}>
-              {filteredCatalog.map((opt) => {
-                const isSelected = selectedMetrics.includes(opt.metricType);
+            {/* Catalog Grid */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+                gap: '0.375rem',
+                maxHeight: '180px',
+                overflowY: 'auto',
+                padding: '0.5rem',
+                background: 'rgba(0,0,0,0.15)',
+                borderRadius: '8px',
+                border: '1px solid var(--border-color)',
+              }}
+            >
+              {filteredCatalog.map((item) => {
+                const isSelected = panelType === 'baseline'
+                  ? selectedBaselineMetric === item.metricType
+                  : selectedMetrics.includes(item.metricType);
+
                 return (
-                  <button
-                    key={opt.metricType}
-                    type="button"
-                    onClick={() => toggleMetric(opt.metricType)}
-                    className={`btn ${isSelected ? 'btn-primary' : 'btn-secondary'}`}
-                    style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  <div
+                    key={item.metricType}
+                    onClick={() => {
+                      if (panelType === 'baseline') {
+                        setSelectedBaselineMetric(item.metricType);
+                      } else {
+                        toggleMetric(item.metricType);
+                      }
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '0.4rem 0.6rem',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      border: '1px solid',
+                      borderColor: isSelected ? 'var(--accent-primary)' : 'transparent',
+                      background: isSelected ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.02)',
+                      transition: 'all 0.15s ease',
+                    }}
                   >
-                    {isSelected && <Check size={12} />}
-                    <span>{opt.displayName}</span>
-                    {opt.unit && <span style={{ opacity: 0.6, fontSize: '0.6875rem' }}>({opt.unit})</span>}
-                    {opt.isCustom && <span style={{ fontSize: '0.625rem', background: 'rgba(168,85,247,0.2)', color: '#c084fc', padding: '1px 4px', borderRadius: '4px' }}>Custom</span>}
-                  </button>
+                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: '4px' }}>
+                      <div style={{ fontSize: '0.75rem', fontWeight: isSelected ? 600 : 400, color: isSelected ? 'var(--accent-primary)' : 'var(--text-primary)' }}>
+                        {item.displayName}
+                      </div>
+                      <div style={{ fontSize: '0.625rem', color: 'var(--text-muted)' }}>
+                        {item.unit || item.type}
+                      </div>
+                    </div>
+                    {isSelected && <Check size={14} color="var(--accent-primary)" style={{ flexShrink: 0 }} />}
+                  </div>
                 );
               })}
-              {filteredCatalog.length === 0 && (
-                <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', padding: '0.5rem' }}>No metrics match your search.</span>
-              )}
             </div>
           </div>
 
-          {/* Time Range Selector */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-            <div>
-              <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.375rem' }}>
-                Time Range Mode
-              </label>
-              <select
-                className="input-field"
-                value={rangeType}
-                onChange={(e) => setRangeType(e.target.value as 'relative' | 'absolute')}
-              >
-                <option value="relative">Relative Window</option>
-                <option value="absolute">Custom Date Range</option>
-              </select>
-            </div>
+          {/* Chart-Specific Options */}
+          {panelType === 'chart' && (
+            <>
+              {/* Aggregation & Chart Type */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.375rem' }}>
+                    Aggregation:
+                  </label>
+                  <select
+                    className="input-field"
+                    value={aggregation}
+                    onChange={(e) => setAggregation(e.target.value as any)}
+                  >
+                    <option value="raw">Raw (No Aggregation)</option>
+                    <option value="1m_avg">1-Minute Average</option>
+                    <option value="5m_avg">5-Minute Average</option>
+                    <option value="daily_avg">Daily Average</option>
+                    <option value="weekly_avg">Weekly Average</option>
+                  </select>
+                </div>
 
-            {rangeType === 'relative' ? (
+                <div>
+                  <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.375rem' }}>
+                    Chart Type:
+                  </label>
+                  <select
+                    className="input-field"
+                    value={chartType}
+                    onChange={(e) => setChartType(e.target.value as 'line' | 'bar')}
+                  >
+                    <option value="line">Line Chart</option>
+                    <option value="bar">Bar Chart</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Time Range Options */}
               <div>
                 <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.375rem' }}>
-                  Relative Window
+                  Time Range:
                 </label>
-                <select
-                  className="input-field"
-                  value={relativeValue}
-                  onChange={(e) => setRelativeValue(e.target.value as any)}
-                >
-                  <option value="last_24h">Last 24 Hours</option>
-                  <option value="last_7d">Last 7 Days</option>
-                  <option value="last_30d">Last 30 Days</option>
-                  <option value="last_90d">Last 90 Days</option>
-                  <option value="last_1y">Last 1 Year</option>
-                </select>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <div>
-                  <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.375rem' }}>
-                    Start Date
+                <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.5rem' }}>
+                  <label style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                    <input
+                      type="radio"
+                      name="rangeType"
+                      checked={rangeType === 'relative'}
+                      onChange={() => setRangeType('relative')}
+                    />
+                    Relative Window
                   </label>
-                  <input
-                    type="date"
-                    className="input-field"
-                    value={startTime}
-                    onChange={(e) => setStartTime(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.375rem' }}>
-                    End Date
+                  <label style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                    <input
+                      type="radio"
+                      name="rangeType"
+                      checked={rangeType === 'absolute'}
+                      onChange={() => setRangeType('absolute')}
+                    />
+                    Custom Date Range
                   </label>
-                  <input
-                    type="date"
-                    className="input-field"
-                    value={endTime}
-                    onChange={(e) => setEndTime(e.target.value)}
-                  />
                 </div>
+
+                {rangeType === 'relative' ? (
+                  <select
+                    className="input-field"
+                    value={relativeValue}
+                    onChange={(e) => setRelativeValue(e.target.value as any)}
+                  >
+                    <option value="last_24h">Last 24 Hours</option>
+                    <option value="last_7d">Last 7 Days</option>
+                    <option value="last_30d">Last 30 Days</option>
+                    <option value="last_90d">Last 90 Days</option>
+                    <option value="last_1y">Last 1 Year</option>
+                  </select>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                    <div>
+                      <span style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>Start Date:</span>
+                      <input
+                        type="date"
+                        className="input-field"
+                        value={startTime}
+                        onChange={(e) => setStartTime(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <span style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>End Date:</span>
+                      <input
+                        type="date"
+                        className="input-field"
+                        value={endTime}
+                        onChange={(e) => setEndTime(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </>
+          )}
 
-          {/* Resolution & Chart Type */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-            <div>
-              <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.375rem' }}>
-                Resolution / Downsampling
-              </label>
-              <select
-                className="input-field"
-                value={aggregation}
-                onChange={(e) => setAggregation(e.target.value as any)}
-              >
-                <option value="weekly_avg">Weekly Average (Default)</option>
-                <option value="daily_avg">Daily Resolution</option>
-                <option value="5m_avg">5-Minute Intervals</option>
-                <option value="1m_avg">1-Minute Intervals</option>
-                <option value="raw">Raw / Exact Timestamps</option>
-              </select>
-            </div>
-
-            <div>
-              <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.375rem' }}>
-                Chart Style
-              </label>
-              <select
-                className="input-field"
-                value={chartType}
-                onChange={(e) => setChartType(e.target.value as 'line' | 'bar')}
-              >
-                <option value="line">Multi-Series Line (with Multi-Y-Axes)</option>
-                <option value="bar">Bar Chart</option>
-              </select>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
+          {/* Action Buttons */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
             <button type="button" className="btn btn-secondary" onClick={onClose}>
               Cancel
             </button>
-            <button type="submit" className="btn btn-primary">
-              Apply to Dashboard
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={panelType === 'baseline' ? !selectedBaselineMetric : selectedMetrics.length === 0}
+            >
+              {panel ? 'Save Changes' : 'Add Panel'}
             </button>
           </div>
         </form>

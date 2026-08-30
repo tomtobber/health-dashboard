@@ -85,8 +85,9 @@ export const syncRuns = pgTable('sync_runs', {
   completedAt: timestamp('completed_at', { withTimezone: true }),
 });
 
-export interface DashboardPanelConfig {
+export interface ChartPanelConfig {
   id: string;
+  panelType?: 'chart';
   metricTypes: string[];
   timeRange:
     | { type: 'relative'; value: 'last_24h' | 'last_7d' | 'last_30d' | 'last_90d' | 'last_1y' }
@@ -94,6 +95,14 @@ export interface DashboardPanelConfig {
   aggregation: 'raw' | '1m_avg' | '5m_avg' | 'daily_avg' | 'weekly_avg';
   chartType?: 'line' | 'bar';
 }
+
+export interface BaselinePanelConfig {
+  id: string;
+  panelType: 'baseline';
+  metricType: string;
+}
+
+export type DashboardPanelConfig = ChartPanelConfig | BaselinePanelConfig;
 
 export interface DashboardViewConfig {
   panels: DashboardPanelConfig[];

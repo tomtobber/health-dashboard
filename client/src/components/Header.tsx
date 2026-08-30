@@ -8,7 +8,6 @@ interface HeaderProps {
   onOpenLogModal: () => void;
   onOpenDefModal: () => void;
   onAddPanel: () => void;
-  onOpenBaselines?: () => void;
   onOpenCorrelation?: () => void;
   onTriggerSync: () => void;
   onConnectGoogle?: () => void;
@@ -23,7 +22,6 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenLogModal,
   onOpenDefModal,
   onAddPanel,
-  onOpenBaselines,
   onOpenCorrelation,
   onTriggerSync,
   onConnectGoogle,
@@ -98,10 +96,6 @@ export const Header: React.FC<HeaderProps> = ({
             <button className="btn btn-primary" onClick={onOpenLogModal}>
               <PlusCircle size={15} />
               <span>Log Entry</span>
-            </button>
-            <button className="btn btn-secondary" onClick={onOpenBaselines} title="View personal baselines">
-              <Activity size={15} />
-              <span>Personal Baselines</span>
             </button>
             <button className="btn btn-secondary" onClick={onOpenCorrelation} title="Analyze cross-metric correlation">
               <ScatterChart size={15} />

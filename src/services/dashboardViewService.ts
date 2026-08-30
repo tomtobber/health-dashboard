@@ -5,8 +5,9 @@ import { and, eq } from 'drizzle-orm';
 import { ValidationError, NotFoundError, DatabaseError } from '../errors/AppError';
 import { logger } from '../utils/logger';
 
-export const PanelConfigSchema = z.object({
+export const ChartPanelConfigSchema = z.object({
   id: z.string().min(1, 'Panel id is required'),
+  panelType: z.literal('chart').optional().default('chart'),
   metricTypes: z.array(z.string().min(1)).min(1, 'At least one metricType is required'),
   timeRange: z.discriminatedUnion('type', [
     z.object({
@@ -22,6 +23,17 @@ export const PanelConfigSchema = z.object({
   aggregation: z.enum(['raw', '1m_avg', '5m_avg', 'daily_avg', 'weekly_avg']),
   chartType: z.enum(['line', 'bar']).optional(),
 });
+
+export const BaselinePanelConfigSchema = z.object({
+  id: z.string().min(1, 'Panel id is required'),
+  panelType: z.literal('baseline'),
+  metricType: z.string().min(1, 'metricType is required'),
+});
+
+export const PanelConfigSchema = z.union([
+  BaselinePanelConfigSchema,
+  ChartPanelConfigSchema,
+]);
 
 export const DashboardViewConfigSchema = z.object({
   panels: z.array(PanelConfigSchema).min(1, 'At least one panel is required'),

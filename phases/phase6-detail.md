@@ -150,15 +150,17 @@ Rejects non-numeric/duration metric types as the baseline endpoint does.
 
 | UI element | Exact copy |
 |---|---|
-| Header nav button | `Personal Baselines` |
-| Panel series action | `View Historical Baseline` |
-| Modal title | `Personal Baseline: {displayName}` |
-| Baseline summary | `Your baseline for {displayName}: {mean} ± {stddev} {unit}, based on your last {windowDays} days (n={sampleSize}).` |
-| Range detail | `Observed range in this window: {min} – {max} {unit}` |
-| Insufficient-data notice | `Insufficient data to calculate a baseline for {displayName}. Found {sampleSize} entries in the last {windowDays} days (minimum required: {minRequired}).` |
-| Window field | `Historical Window (Days)` |
-| Window helper | `Calculated over your trailing history up to right now.` |
-| Save action | `Save Window` |
+| Panel type option (in add-panel flow) | `Personal Baseline` |
+| Panel header | `{displayName}` |
+| Current baseline line | `{mean} ± {stddev} {unit}, based on your last {windowDays} days (n={sampleSize})` |
+| Range detail | `Observed range: {min} – {max} {unit}` |
+| Insufficient-data notice (current baseline) | `Insufficient data to calculate a baseline for {displayName}. Found {sampleSize} entries in the last {windowDays} days (minimum required: {minRequired}).` |
+| History strip label | `Baseline History` |
+| History empty state | `No baseline history yet for {displayName}. Refresh to generate it.` |
+| Refresh button | `Refresh Baseline History` |
+| Refresh result (added snapshots) | `Added {snapshotsAdded} new snapshot(s) across {metricsProcessed} metric(s).` |
+| Refresh result (nothing new) | `Already up to date.` |
+| Refresh result (not fully finished) | `Refreshed part of your history. Run again to continue.` |
 
 Forbidden evaluative/population language:
 - normal
@@ -168,13 +170,12 @@ Forbidden evaluative/population language:
 - goal
 - good
 - bad
-
-Any future copy change must be checked against this list.
+- no language implying refresh "improved" anything
 
 UI entry points:
-- `Header.tsx` → global Personal Baselines action
-- `MultiMetricPanel.tsx` → per-series View Historical Baseline action
-- both open `BaselineModal.tsx`
+- Persistent `BaselinePanel.tsx` dashboard panel type (one metric per panel).
+- Panel creation via `PanelConfigModal.tsx` (Add Panel → Personal Baseline).
+- Per-panel `Refresh Baseline History` action invoking `POST /api/metrics/baseline-history/refresh`.
 
 ## Trend Detection — Complete
 

@@ -24,9 +24,10 @@ function formatTimestampSafely(val?: string | number | Date | null, fmt = 'PPP p
 }
 import React, { useEffect, useState, useMemo } from 'react';
 import {
+  ChartPanelConfig,
   DashboardPanelConfig,
   EnrichedMetricQueryResult,
-  } from '../types';
+} from '../types';
 import { api } from '../services/api';
 import {
   ResponsiveContainer,
@@ -45,14 +46,13 @@ import { Settings, Trash2, AlertCircle, RefreshCw, TrendingUp, ScatterChart } fr
 
 
 interface MultiMetricPanelProps {
-  panel: DashboardPanelConfig;
+  panel: ChartPanelConfig;
   user: { id: string; email: string } | null;
   onEdit: () => void;
   onRemove: () => void;
   onOpenAuth?: () => void;
   onSeedDemo?: () => void;
   onOpenLog?: () => void;
-  onOpenBaseline?: (metricType: string, displayName?: string) => void;
   onOpenCorrelation?: (metricTypeA: string, metricTypeB: string) => void;
 }
 
@@ -67,7 +67,7 @@ const SERIES_COLORS = [
   '#14b8a6', // Teal
 ];
 
-export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user, onEdit, onRemove, onOpenAuth, onSeedDemo, onOpenLog, onOpenBaseline, onOpenCorrelation }) => {
+export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user, onEdit, onRemove, onOpenAuth, onSeedDemo, onOpenLog, onOpenCorrelation }) => {
   const [data, setData] = useState<EnrichedMetricQueryResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

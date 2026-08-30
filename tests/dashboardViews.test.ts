@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import { app } from '../src/app';
 import { env } from '../src/config/env';
 import { db, pool } from '../src/db';
-import { users } from '../src/db/schema';
+import { users, ChartPanelConfig } from '../src/db/schema';
 import { eq } from 'drizzle-orm';
 import {
   createDashboardView,
@@ -91,7 +91,7 @@ describe('Phase 5 - Dashboard Views & Multi-Metric Config', () => {
       expect(view.id).toBeDefined();
       expect(view.name).toBe('Cardio & Recovery');
       expect(view.config.panels).toHaveLength(1);
-      expect(view.config.panels[0].metricTypes).toEqual(['heart-rate', 'daily-resting-heart-rate']);
+      expect((view.config.panels[0] as ChartPanelConfig).metricTypes).toEqual(['heart-rate', 'daily-resting-heart-rate']);
     });
 
     test('creates dashboard view with absolute timeRange', async () => {
@@ -116,7 +116,7 @@ describe('Phase 5 - Dashboard Views & Multi-Metric Config', () => {
       });
 
       expect(view.name).toBe('Marathon Training Week');
-      expect(view.config.panels[0].timeRange.type).toBe('absolute');
+      expect((view.config.panels[0] as ChartPanelConfig).timeRange.type).toBe('absolute');
     });
 
     test('rejects creation with empty metricTypes', async () => {
@@ -236,7 +236,7 @@ describe('Phase 5 - Dashboard Views & Multi-Metric Config', () => {
       });
 
       expect(updated.name).toBe('Updated View Name');
-      expect(updated.config.panels[0].timeRange).toEqual({ type: 'relative', value: 'last_90d' });
+      expect((updated.config.panels[0] as ChartPanelConfig).timeRange).toEqual({ type: 'relative', value: 'last_90d' });
     });
 
     test('updateDashboardView rejects renaming to an existing name of same user (PG 23505 -> ValidationError)', async () => {
@@ -389,6 +389,36 @@ describe('Phase 5 - Dashboard Views & Multi-Metric Config', () => {
         .set('Authorization', `Bearer ${authToken}`);
 
       expect(check.status).toBe(404);
+    });
+
+    test('POST /api/dashboard-views supports baseline panel type alongside chart panels', async () => {
+      const res = await request(app)
+        .post('/api/dashboard-views')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          name: 'Baseline & Chart Mixed View',
+          config: {
+            panels: [
+              {
+                id: 'baseline-panel-1',
+                panelType: 'baseline',
+                metricType: 'daily-resting-heart-rate',
+              },
+              {
+                id: 'chart-panel-legacy',
+                metricTypes: ['steps', 'distance'],
+                timeRange: { type: 'relative', value: 'last_30d' },
+                aggregation: 'daily_avg',
+              },
+            ],
+          },
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.dashboardView.config.panels).toHaveLength(2);
+      expect(res.body.dashboardView.config.panels[0].panelType).toBe('baseline');
+      expect(res.body.dashboardView.config.panels[0].metricType).toBe('daily-resting-heart-rate');
+      expect(res.body.dashboardView.config.panels[1].panelType).toBe('chart');
     });
   });
 });

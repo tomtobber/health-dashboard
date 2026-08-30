@@ -5,7 +5,7 @@ import { MultiMetricPanel } from './components/MultiMetricPanel';
 import { PanelConfigModal } from './components/PanelConfigModal';
 import { ManualEntryModal } from './components/ManualEntryModal';
 import { MetricDefinitionModal } from './components/MetricDefinitionModal';
-import { BaselineModal } from './components/BaselineModal';
+import { BaselinePanel } from './components/panels/BaselinePanel';
 import { CorrelationModal } from './components/CorrelationModal';
 import { AuthModal } from './components/AuthModal';
 import {
@@ -47,7 +47,6 @@ export const App: React.FC = () => {
   const [isLogOpen, setIsLogOpen] = useState(false);
   const [isDefOpen, setIsDefOpen] = useState(false);
   const [editingPanel, setEditingPanel] = useState<DashboardPanelConfig | null | 'new'>(null);
-  const [baselineModalMetric, setBaselineModalMetric] = useState<{ metricType?: string; displayName?: string } | null>(null);
   const [correlationModalMetrics, setCorrelationModalMetrics] = useState<{ metricTypeA?: string; metricTypeB?: string } | null>(null);
 
   // Initialize app
@@ -193,7 +192,7 @@ export const App: React.FC = () => {
         onOpenLogModal={() => setIsLogOpen(true)}
         onOpenDefModal={() => setIsDefOpen(true)}
         onAddPanel={() => setEditingPanel('new')}
-        onOpenBaselines={() => setBaselineModalMetric({})}
+
         onOpenCorrelation={() => setCorrelationModalMetrics({})}
         onTriggerSync={handleTriggerSync}
         isSyncing={isSyncing}
@@ -217,19 +216,33 @@ export const App: React.FC = () => {
 
       {/* Main Grid of Multi-Metric Panels */}
       <main style={{ flex: 1, padding: '0 1rem 2rem 1rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(560px, 1fr))', gap: '1.25rem', alignItems: 'start' }}>
-        {panels.map((panel) => (
-          <MultiMetricPanel
-            key={panel.id}
-            panel={panel}
-            user={user}
-            onEdit={() => setEditingPanel(panel)}
-            onRemove={() => handleRemovePanel(panel.id)}
-            onOpenAuth={() => setIsAuthOpen(true)}
-            onSeedDemo={handleSeedDemoData}
-            onOpenLog={() => setIsLogOpen(true)}
-            onOpenBaseline={(metricType, displayName) => setBaselineModalMetric({ metricType, displayName })}
-          />
-        ))}
+        {panels.map((panel) => {
+          if ('panelType' in panel && panel.panelType === 'baseline') {
+            return (
+              <BaselinePanel
+                key={panel.id}
+                panel={panel}
+                user={user}
+                onEdit={() => setEditingPanel(panel)}
+                onRemove={() => handleRemovePanel(panel.id)}
+                onOpenAuth={() => setIsAuthOpen(true)}
+              />
+            );
+          }
+          return (
+            <MultiMetricPanel
+              key={panel.id}
+              panel={panel}
+              user={user}
+              onEdit={() => setEditingPanel(panel)}
+              onRemove={() => handleRemovePanel(panel.id)}
+              onOpenAuth={() => setIsAuthOpen(true)}
+              onSeedDemo={handleSeedDemoData}
+              onOpenLog={() => setIsLogOpen(true)}
+              onOpenCorrelation={(metricTypeA, metricTypeB) => setCorrelationModalMetrics({ metricTypeA, metricTypeB })}
+            />
+          );
+        })}
 
         {panels.length === 0 && (
           <div className="glass-panel" style={{ gridColumn: '1 / -1', padding: '3rem 1rem', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', color: 'var(--text-muted)' }}>
@@ -273,13 +286,7 @@ export const App: React.FC = () => {
       )}
 
       
-      {baselineModalMetric && (
-        <BaselineModal
-          initialMetricType={baselineModalMetric.metricType}
-          initialDisplayName={baselineModalMetric.displayName}
-          onClose={() => setBaselineModalMetric(null)}
-        />
-      )}
+
 
       {correlationModalMetrics && (
         <CorrelationModal

@@ -232,7 +232,7 @@ Detailed contract/API: `phases/phase3-detail.md`.
 - SPA fallback is Express 4/5-safe and comes after API/health routes.
 - Root build runs backend TypeScript compilation then client build.
 - Render explicitly installs root and client dependencies.
-- `dashboard_views` stores named chart layouts in JSONB.
+- `dashboard_views` stores named dashboard layouts in JSONB. Panels are polymorphic via `panelType`, with `chart` (overlaid time-series) as the default for panels predating the field.
 - Panel metric references are strings, not FKs.
 - Relative ranges resolve at render time, not save time.
 - Supported aggregation: `raw`, `1m_avg`, `5m_avg`, `daily_avg`, `weekly_avg`.
@@ -298,7 +298,7 @@ Detailed contract/API/UI: `phases/phase5-detail.md`.
 - `GET /api/metrics/correlation`
 - Exact implementation detail is in `phases/phase6-detail.md`.
 
-### Baseline history — fourth slice, in progress
+### Baseline history — fourth slice, complete
 
 - Append-only monthly snapshots of the same statistics as the live baseline (mean, stddev, min, max, sample size), computed as of each fully-elapsed UTC calendar-month boundary.
 - Fixed, non-configurable window: `BASELINE_HISTORY_WINDOW_DAYS = 90`. No config endpoint exists for it.
@@ -307,6 +307,7 @@ Detailed contract/API/UI: `phases/phase5-detail.md`.
 - Existing rows are never recomputed or modified once inserted.
 - Rows below the baseline sample-size gate are simply not created for that boundary — there is no stored "insufficient data" row.
 - `GET /api/metrics/:metricType/baseline-history?startTime=&endTime=` returns stored rows for the authenticated user in that range.
+- The live baseline UI is now a persistent dashboard panel type (`BaselinePanel.tsx`), not a modal popup. Each baseline panel renders current live baseline stats, a chronological monthly snapshot history strip, and a per-panel 'Refresh Baseline History' action.
 - Does not change the live baseline or trend endpoints' behavior.
 - Exact implementation detail is in `phases/phase6-detail.md`.
 

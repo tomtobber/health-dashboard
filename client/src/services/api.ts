@@ -5,6 +5,8 @@ import {
   DashboardViewConfig,
   MetricValueType,
   BaselineResult,
+  BaselineHistoryItem,
+  BaselineHistoryRefreshSummary,
   TrendResult,
   BaselineConfigResult,
   CorrelationResult,
@@ -293,6 +295,26 @@ export const api = {
     return request<BaselineConfigResult>(`/api/metrics/${encodeURIComponent(metricType)}/baseline-config`, {
       method: 'PUT',
       body: JSON.stringify({ windowDays }),
+    });
+  },
+
+  async getBaselineHistory(
+    metricType: string,
+    startTime?: string,
+    endTime?: string
+  ): Promise<{ metricType: string; history: BaselineHistoryItem[] }> {
+    const params = new URLSearchParams();
+    if (startTime) params.append('startTime', startTime);
+    if (endTime) params.append('endTime', endTime);
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return request<{ metricType: string; history: BaselineHistoryItem[] }>(
+      `/api/metrics/${encodeURIComponent(metricType)}/baseline-history${query}`
+    );
+  },
+
+  async refreshBaselineHistory(): Promise<BaselineHistoryRefreshSummary> {
+    return request<BaselineHistoryRefreshSummary>('/api/metrics/baseline-history/refresh', {
+      method: 'POST',
     });
   },
 };

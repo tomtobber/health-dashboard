@@ -47,13 +47,22 @@ export type TimeRange =
   | { type: 'relative'; value: 'last_24h' | 'last_7d' | 'last_30d' | 'last_90d' | 'last_1y' }
   | { type: 'absolute'; startTime: string; endTime: string };
 
-export interface DashboardPanelConfig {
+export interface ChartPanelConfig {
   id: string;
+  panelType?: 'chart';
   metricTypes: string[];
   timeRange: TimeRange;
   aggregation: 'raw' | '1m_avg' | '5m_avg' | 'daily_avg' | 'weekly_avg';
   chartType?: 'line' | 'bar';
 }
+
+export interface BaselinePanelConfig {
+  id: string;
+  panelType: 'baseline';
+  metricType: string;
+}
+
+export type DashboardPanelConfig = ChartPanelConfig | BaselinePanelConfig;
 
 export interface DashboardViewConfig {
   panels: DashboardPanelConfig[];
@@ -155,3 +164,32 @@ export type CorrelationResult =
       sampleSize: number;
       minRequired: number;
     };
+
+export interface BaselineHistoryItem {
+  id: string;
+  userId: string;
+  metricType: string;
+  computedAt: string;
+  windowDays: number;
+  windowStart: string;
+  windowEnd: string;
+  mean: number;
+  stddev: number;
+  min: number;
+  max: number;
+  sampleSize: number;
+  createdAt: string;
+}
+
+export interface BaselineHistoryRefreshSummary {
+  metricsProcessed: number;
+  snapshotsAdded: number;
+  snapshotsSkippedExisting: number;
+  snapshotsSkippedInsufficientData: number;
+  metricsSkippedNonApplicable: Array<{
+    metricType: string;
+    reason: 'non_applicable_type';
+    valueType: string;
+  }>;
+  hasMore: boolean;
+}

@@ -405,3 +405,19 @@ The current, in-progress month is excluded from history generation because a sna
 ### Why the unique index doesn't include window_days
 
 The unique index is `(user_id, metric_type, computed_at)`. `window_days` is currently a single fixed constant, so this is not a live ambiguity. If `BASELINE_HISTORY_WINDOW_DAYS` is ever changed in the future, existing snapshot rows keep the window they were computed with rather than being invalidated or retroactively reinterpreted — a history entry describes what was true when it was computed, not what the current default is. This is a deliberate choice, not an oversight, and should be revisited only if multiple concurrent history windows are ever needed.
+
+### Why the panel model gained a panelType discriminator
+
+The baseline panel is not a time-series chart overlay, so overloading the existing chart panel shape would force irrelevant fields (aggregation, time range, chartType) onto a panel type that does not use them. A discriminated union (`PanelConfig = ChartPanelConfig | BaselinePanelConfig`) keeps each panel type's config honest and strictly typed around what it actually requires.
+
+### Why missing panelType on existing saved panels defaults to chart rather than a migration
+
+Every panel saved in `dashboard_views` prior to Slice 4 was inherently a multi-metric chart panel. Defaulting a missing `panelType` field to `'chart'` at parse time (via Zod `default('chart')` and client fallbacks) allows complete backward compatibility without the risk, downtime, and operational overhead of a database migration to backfill explicit values.
+
+### Why one metric per baseline panel, not multiple
+
+Baseline panels display detailed point-in-time statistics, observed ranges, and a monthly historical trend strip for a specific health indicator. Rendering multiple metrics within a single baseline panel would duplicate the dashboard's own grid-of-panels layout at a smaller, cramped sub-card scale. Sticking to one metric per panel keeps each panel's data-fetching, history rendering, and layout clean and modular.
+
+### Why the old modal and its entry points were removed rather than kept alongside the panel
+
+The old `BaselineModal.tsx` popup only showed a static live snapshot with no visual timeline or history progression, which was the core reason Slice 4 was created. Retaining both the modal and the persistent dashboard panel would introduce redundant, overlapping UI surfaces with divergent capabilities. Removing the modal centralizes baseline monitoring directly onto the customizable dashboard canvas.
