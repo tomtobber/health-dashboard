@@ -73,14 +73,26 @@ export const BaselinePanel: React.FC<BaselinePanelProps> = ({
     setToastMessage(null);
 
     try {
-      const summary = await api.refreshBaselineHistory();
+      let hasMore = true;
+      let totalSnapshotsAdded = 0;
+      let totalMetricsProcessed = 0;
+      let iterations = 0;
+      const MAX_ITERATIONS = 20;
+
+      while (hasMore && iterations < MAX_ITERATIONS) {
+        const summary = await api.refreshBaselineHistory();
+        totalSnapshotsAdded += summary.snapshotsAdded;
+        totalMetricsProcessed = Math.max(totalMetricsProcessed, summary.metricsProcessed);
+        hasMore = summary.hasMore;
+        iterations++;
+      }
 
       // Determine result message per exact spec
-      if (summary.hasMore) {
+      if (hasMore) {
         setToastMessage('Refreshed part of your history. Run again to continue.');
-      } else if (summary.snapshotsAdded > 0) {
+      } else if (totalSnapshotsAdded > 0) {
         setToastMessage(
-          `Added ${summary.snapshotsAdded} new snapshot(s) across ${summary.metricsProcessed} metric(s).`
+          `Added ${totalSnapshotsAdded} new snapshot(s) across ${totalMetricsProcessed} metric(s).`
         );
       } else {
         setToastMessage('Already up to date.');
