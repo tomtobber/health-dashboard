@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { db } from '../db';
 import { dashboardViews, DashboardViewConfig, DashboardPanelConfig } from '../db/schema';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, desc } from 'drizzle-orm';
 import { ValidationError, NotFoundError, DatabaseError } from '../errors/AppError';
 import { logger } from '../utils/logger';
 
@@ -172,7 +172,8 @@ export async function listDashboardViews(userId: string): Promise<DashboardViewR
     const rows = await db
       .select()
       .from(dashboardViews)
-      .where(eq(dashboardViews.userId, userId));
+      .where(eq(dashboardViews.userId, userId))
+      .orderBy(desc(dashboardViews.updatedAt));
 
     return rows.map((r) => ({
       id: r.id,

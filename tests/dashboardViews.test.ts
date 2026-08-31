@@ -197,10 +197,17 @@ describe('Phase 5 - Dashboard Views & Multi-Metric Config', () => {
       expect(otherView.name).toBe('Cardio & Recovery');
     });
 
-    test('lists views for specific user only', async () => {
+    test('lists views for specific user only and orders by updated_at DESC', async () => {
       const views = await listDashboardViews(testUserId);
       expect(views.length).toBeGreaterThanOrEqual(2);
       expect(views.every((v) => v.userId === testUserId)).toBe(true);
+
+      // Verify descending updated_at order
+      for (let i = 1; i < views.length; i++) {
+        expect(new Date(views[i - 1].updatedAt).getTime()).toBeGreaterThanOrEqual(
+          new Date(views[i].updatedAt).getTime()
+        );
+      }
     });
 
     test('getDashboardView returns view by id and blocks cross-user access (404)', async () => {
