@@ -16,6 +16,23 @@ import {
 import { api, setToken } from './services/api';
 import { Plus } from 'lucide-react';
 
+const getLastViewIdKey = (userId: string) => `dashboard:lastViewId:${userId}`;
+const getDraftKey = (viewId: string) => `dashboard:draft:${viewId}`;
+const getScratchDraftKey = (userId: string) => `dashboard:draft:scratch:${userId}`;
+
+function getStoredDraft(key: string): DashboardPanelConfig[] | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+  } catch {
+    // Ignore JSON errors
+  }
+  return null;
+}
+
+
 const DEFAULT_PANELS: DashboardPanelConfig[] = [
   {
     id: 'panel-cardio',
@@ -49,18 +66,22 @@ export const App: React.FC = () => {
   const [editingPanel, setEditingPanel] = useState<DashboardPanelConfig | null | 'new'>(null);
   const [correlationModalMetrics, setCorrelationModalMetrics] = useState<{ metricTypeA?: string; metricTypeB?: string } | null>(null);
 
+  const isLoadedRef = React.useRef(false);
+
   // Initialize app
   const initApp = async () => {
     try {
       const userData = await api.getCurrentUser();
       setUser(userData.user);
-      loadUserData();
+      await loadUserData(userData.user);
     } catch {
       // Not logged in or token expired
+      isLoadedRef.current = true;
     }
   };
 
-  const loadUserData = async () => {
+  const loadUserData = async (currentUser?: { id: string; email: string } | null) => {
+    const activeUser = currentUser !== undefined ? currentUser : user;
     try {
       const [viewsList, defsList, accounts] = await Promise.all([
         api.listDashboardViews().catch(() => []),
@@ -74,14 +95,55 @@ export const App: React.FC = () => {
       const googleAcc = accounts.find((a) => a.provider === 'google_health');
       setGoogleStatus(googleAcc ? googleAcc.status : 'offline');
 
-      if (viewsList.length > 0 && !activeViewId) {
-        setActiveViewId(viewsList[0].id);
-        setPanels(viewsList[0].config.panels);
+      if (activeUser) {
+        const storedLastViewId = localStorage.getItem(getLastViewIdKey(activeUser.id));
+
+        if (storedLastViewId === 'scratch') {
+          setActiveViewId(null);
+          const draft = getStoredDraft(getScratchDraftKey(activeUser.id));
+          setPanels(draft || DEFAULT_PANELS);
+        } else if (storedLastViewId && viewsList.some((v) => v.id === storedLastViewId)) {
+          const selected = viewsList.find((v) => v.id === storedLastViewId)!;
+          setActiveViewId(selected.id);
+          const draft = getStoredDraft(getDraftKey(selected.id));
+          setPanels(draft || selected.config.panels);
+        } else if (viewsList.length > 0) {
+          const fallback = viewsList[0];
+          setActiveViewId(fallback.id);
+          localStorage.setItem(getLastViewIdKey(activeUser.id), fallback.id);
+          const draft = getStoredDraft(getDraftKey(fallback.id));
+          setPanels(draft || fallback.config.panels);
+        } else {
+          setActiveViewId(null);
+          const draft = getStoredDraft(getScratchDraftKey(activeUser.id));
+          setPanels(draft || DEFAULT_PANELS);
+        }
       }
     } catch {
       // Ignored
+    } finally {
+      isLoadedRef.current = true;
     }
   };
+
+  // Debounced auto-persist unsaved panel edits to localStorage
+  useEffect(() => {
+    if (!user || !isLoadedRef.current) return;
+
+    const timer = setTimeout(() => {
+      try {
+        if (activeViewId) {
+          localStorage.setItem(getDraftKey(activeViewId), JSON.stringify(panels));
+        } else {
+          localStorage.setItem(getScratchDraftKey(user.id), JSON.stringify(panels));
+        }
+      } catch {
+        // Storage full or disabled
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [panels, activeViewId, user]);
 
   useEffect(() => {
     initApp();
@@ -108,34 +170,70 @@ export const App: React.FC = () => {
     setViews([]);
     setActiveViewId(null);
     setPanels(DEFAULT_PANELS);
+    isLoadedRef.current = false;
   };
 
   const handleSelectView = (view: DashboardView) => {
     setActiveViewId(view.id);
-    setPanels(view.config.panels);
+    if (user) {
+      localStorage.setItem(getLastViewIdKey(user.id), view.id);
+    }
+    const draft = getStoredDraft(getDraftKey(view.id));
+    setPanels(draft || view.config.panels);
+  };
+
+  const handleNewEmptyLayout = () => {
+    setActiveViewId(null);
+    if (user) {
+      localStorage.setItem(getLastViewIdKey(user.id), 'scratch');
+      const draft = getStoredDraft(getScratchDraftKey(user.id));
+      setPanels(draft || DEFAULT_PANELS);
+    } else {
+      setPanels(DEFAULT_PANELS);
+    }
   };
 
   const handleSaveCurrentView = async (name: string) => {
     const saved = await api.createDashboardView(name, { panels });
     setViews([...views, saved]);
     setActiveViewId(saved.id);
+    if (user) {
+      localStorage.setItem(getLastViewIdKey(user.id), saved.id);
+      localStorage.removeItem(getScratchDraftKey(user.id));
+      localStorage.removeItem(getDraftKey(saved.id));
+    }
   };
 
   const handleUpdateView = async (viewId: string) => {
     const updated = await api.updateDashboardView(viewId, { config: { panels } });
     setViews(views.map((v) => (v.id === viewId ? updated : v)));
+    localStorage.removeItem(getDraftKey(viewId));
   };
 
   const handleDeleteView = async (viewId: string) => {
     await api.deleteDashboardView(viewId);
+    localStorage.removeItem(getDraftKey(viewId));
     const remaining = (Array.isArray(views) ? views : []).filter((v) => v.id !== viewId);
     setViews(remaining);
-    if (remaining.length > 0) {
-      setActiveViewId(remaining[0].id);
-      setPanels(remaining[0].config.panels);
-    } else {
-      setActiveViewId(null);
-      setPanels(DEFAULT_PANELS);
+    if (activeViewId === viewId) {
+      if (remaining.length > 0) {
+        const next = remaining[0];
+        setActiveViewId(next.id);
+        if (user) {
+          localStorage.setItem(getLastViewIdKey(user.id), next.id);
+        }
+        const draft = getStoredDraft(getDraftKey(next.id));
+        setPanels(draft || next.config.panels);
+      } else {
+        setActiveViewId(null);
+        if (user) {
+          localStorage.setItem(getLastViewIdKey(user.id), 'scratch');
+          const draft = getStoredDraft(getScratchDraftKey(user.id));
+          setPanels(draft || DEFAULT_PANELS);
+        } else {
+          setPanels(DEFAULT_PANELS);
+        }
+      }
     }
   };
 
@@ -207,10 +305,7 @@ export const App: React.FC = () => {
           onSaveCurrentView={handleSaveCurrentView}
           onUpdateView={handleUpdateView}
           onDeleteView={handleDeleteView}
-          onNewEmptyLayout={() => {
-            setActiveViewId(null);
-            setPanels(DEFAULT_PANELS);
-          }}
+          onNewEmptyLayout={handleNewEmptyLayout}
         />
       )}
 

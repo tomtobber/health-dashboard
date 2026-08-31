@@ -427,3 +427,7 @@ The old `BaselineModal.tsx` popup only showed a static live snapshot with no vis
 Baseline panels on the dashboard represent a single metric. The only real caller of baseline history refresh is a panel button targeting its own configured metric. An account-wide batch endpoint iterating all metrics introduces discovery and budgeting complexity (where unrelated metrics consume the per-request snapshot quota before reaching the panel's metric) with no real-world use case.
 
 Bounding snapshot computation per metric (up to 50 elapsed months per request) is straightforward to reason about and isolate. The endpoint is therefore strictly `POST /api/metrics/:metricType/baseline-history/refresh`. Calling it with a non-numeric/non-duration metric throws `ValidationError`, and calling it for a metric with zero entries throws `NotFoundError`.
+
+### Why session state is restored client-side instead of via backend autosave
+
+The user wants full manual control over named views via the existing explicit save button, with no automatic backend writes. The actual problem — losing on-screen state across a refresh/redeploy — is fully solved by persisting to `localStorage`, without introducing any automatic persistence into the named-view data model at all.

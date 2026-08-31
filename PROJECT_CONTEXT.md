@@ -249,6 +249,7 @@ Detailed contract/API: `phases/phase3-detail.md`.
 - Boolean metrics use event markers; category metrics use labeled event markers.
 - Hover tooltips are unified across active series.
 - Existing Phase 3 batched enriched endpoint supplies panel data; Phase 5 adds no new data-fetching endpoint.
+- The dashboard persists the currently selected view and any unsaved panel edits to `localStorage` so a refresh or redeploy restores the exact on-screen state. This is independent of the named-view save mechanism, which remains fully manual and is the only path that writes to `dashboard_views`.
 
 Detailed contract/API/UI: `phases/phase5-detail.md`.
 
