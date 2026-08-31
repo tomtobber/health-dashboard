@@ -1,3 +1,16 @@
+
+function formatBaselineDuration(value: number, unit: string | null): string {
+  if (unit === 'minutes') {
+    const totalMinutes = Math.round(value);
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    if (h === 0) return `${m}m`;
+    if (m === 0) return `${h}h`;
+    return `${h}h ${m}m`;
+  }
+  return unit ? `${value} ${unit}` : `${value}`;
+}
+
 import React, { useEffect, useState, useCallback } from 'react';
 import { BaselinePanelConfig, BaselineResult, BaselineHistoryItem } from '../../types';
 import { api } from '../../services/api';
@@ -114,6 +127,7 @@ export const BaselinePanel: React.FC<BaselinePanelProps> = ({
   const canonical = ALL_CANONICAL_METRICS.find((m) => m.metricType === panel.metricType);
   const displayName = (baseline && baseline.displayName) || (canonical && canonical.displayName) || panel.metricType;
   const unit = (baseline && 'unit' in baseline && baseline.unit) || (canonical && canonical.unit) || '';
+  const isDuration = (canonical && canonical.type === 'duration') || unit === 'minutes';
 
   // Format history data for recharts
   const chartData = history.map((item) => {
@@ -200,29 +214,41 @@ export const BaselinePanel: React.FC<BaselinePanelProps> = ({
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                 <div style={{ padding: '0.875rem 1rem', background: 'var(--bg-card-header)', border: '1px solid var(--border-color)', borderRadius: '10px' }}>
                   <div style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>
-                    {baseline.mean} ± {baseline.stddev} {baseline.unit || ''}, based on your last {baseline.windowDays} days (n={baseline.sampleSize})
+                    {isDuration ? (
+                      `${formatBaselineDuration(baseline.mean, unit)} ± ${formatBaselineDuration(baseline.stddev, unit)}, based on your last ${baseline.windowDays} days (n=${baseline.sampleSize})`
+                    ) : (
+                      `${baseline.mean} ± ${baseline.stddev} ${baseline.unit || ''}, based on your last ${baseline.windowDays} days (n=${baseline.sampleSize})`
+                    )}
                   </div>
                   <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
-                    Observed range: {baseline.min} – {baseline.max} {baseline.unit || ''}
+                    Observed range: {isDuration ? `${formatBaselineDuration(baseline.min, unit)} – ${formatBaselineDuration(baseline.max, unit)}` : `${baseline.min} – ${baseline.max} ${baseline.unit || ''}`}
                   </div>
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem' }}>
                   <div style={{ padding: '0.5rem', background: 'var(--bg-card-header)', borderRadius: '6px', textAlign: 'center' }}>
                     <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>Mean</div>
-                    <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: 'var(--text-primary)' }}>{baseline.mean}</div>
+                    <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                      {isDuration ? formatBaselineDuration(baseline.mean, unit) : baseline.mean}
+                    </div>
                   </div>
                   <div style={{ padding: '0.5rem', background: 'var(--bg-card-header)', borderRadius: '6px', textAlign: 'center' }}>
                     <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>Std Dev (±)</div>
-                    <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: 'var(--text-primary)' }}>{baseline.stddev}</div>
+                    <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                      {isDuration ? formatBaselineDuration(baseline.stddev, unit) : baseline.stddev}
+                    </div>
                   </div>
                   <div style={{ padding: '0.5rem', background: 'var(--bg-card-header)', borderRadius: '6px', textAlign: 'center' }}>
                     <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>Min</div>
-                    <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: 'var(--text-primary)' }}>{baseline.min}</div>
+                    <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                      {isDuration ? formatBaselineDuration(baseline.min, unit) : baseline.min}
+                    </div>
                   </div>
                   <div style={{ padding: '0.5rem', background: 'var(--bg-card-header)', borderRadius: '6px', textAlign: 'center' }}>
                     <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>Max</div>
-                    <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: 'var(--text-primary)' }}>{baseline.max}</div>
+                    <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                      {isDuration ? formatBaselineDuration(baseline.max, unit) : baseline.max}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -258,6 +284,7 @@ export const BaselinePanel: React.FC<BaselinePanelProps> = ({
                       domain={['dataMin - 1', 'dataMax + 1']}
                       tick={{ fill: 'var(--text-muted)', fontSize: 10 }}
                       tickLine={{ stroke: 'var(--border-color)' }}
+                      tickFormatter={(val) => isDuration ? formatBaselineDuration(Number(val), unit) : String(val)}
                     />
                     <Tooltip
                       content={({ active, payload }) => {
@@ -269,13 +296,13 @@ export const BaselinePanel: React.FC<BaselinePanelProps> = ({
                                 {pt.dateLabel}
                               </div>
                               <div style={{ color: 'var(--accent-primary)' }}>
-                                Baseline Mean: {pt.mean} {unit}
+                                Baseline Mean: {isDuration ? formatBaselineDuration(pt.mean, unit) : `${pt.mean} ${unit}`}
                               </div>
                               <div style={{ color: 'var(--text-secondary)' }}>
-                                Std Dev: ±{pt.stddev}
+                                Std Dev: ±{isDuration ? formatBaselineDuration(pt.stddev, unit) : pt.stddev}
                               </div>
                               <div style={{ color: 'var(--text-muted)' }}>
-                                Sample Size: n={pt.sampleSize}
+                                Sample Size: n=${pt.sampleSize}
                               </div>
                             </div>
                           );
