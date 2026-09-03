@@ -1,12 +1,13 @@
 export interface DailyMean {
   day: string; // 'YYYY-MM-DD'
   mean: number;
+  sum: number;
   count: number;
   dateUtcMs: number;
 }
 
 /**
- * Groups metric entries by UTC calendar day and computes arithmetic mean per day.
+ * Groups metric entries by UTC calendar day and computes arithmetic mean and sum per day.
  */
 export function bucketToDailyMeans(
   entries: Array<{ startTime: Date | string; valueNumeric?: number | null }>
@@ -32,6 +33,7 @@ export function bucketToDailyMeans(
     result.set(dayKey, {
       day: dayKey,
       mean,
+      sum,
       count: vals.length,
       dateUtcMs,
     });

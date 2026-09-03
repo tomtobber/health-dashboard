@@ -128,6 +128,8 @@ export const BaselinePanel: React.FC<BaselinePanelProps> = ({
   const displayName = (baseline && baseline.displayName) || (canonical && canonical.displayName) || panel.metricType;
   const unit = (baseline && 'unit' in baseline && baseline.unit) || (canonical && canonical.unit) || '';
   const isDuration = (canonical && canonical.type === 'duration') || unit === 'minutes';
+  const isSteps = panel.metricType === 'steps' || panel.metricType.includes('step') || unit === 'steps';
+  const displayUnit = (isSteps && (unit === 'count' || !unit)) ? 'steps' : (unit || '');
 
   // Format history data for recharts
   const chartData = history.map((item) => {
@@ -217,11 +219,11 @@ export const BaselinePanel: React.FC<BaselinePanelProps> = ({
                     {isDuration ? (
                       `${formatBaselineDuration(baseline.mean, unit)} ± ${formatBaselineDuration(baseline.stddev, unit)}, based on your last ${baseline.windowDays} days (n=${baseline.sampleSize})`
                     ) : (
-                      `${baseline.mean} ± ${baseline.stddev} ${baseline.unit || ''}, based on your last ${baseline.windowDays} days (n=${baseline.sampleSize})`
+                      `${baseline.mean} ± ${baseline.stddev} ${displayUnit}, based on your last ${baseline.windowDays} days (n=${baseline.sampleSize})`
                     )}
                   </div>
                   <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
-                    Observed range: {isDuration ? `${formatBaselineDuration(baseline.min, unit)} – ${formatBaselineDuration(baseline.max, unit)}` : `${baseline.min} – ${baseline.max} ${baseline.unit || ''}`}
+                    Observed range: {isDuration ? `${formatBaselineDuration(baseline.min, unit)} – ${formatBaselineDuration(baseline.max, unit)}` : `${baseline.min} – ${baseline.max} ${displayUnit}`}
                   </div>
                 </div>
 
@@ -296,7 +298,7 @@ export const BaselinePanel: React.FC<BaselinePanelProps> = ({
                                 {pt.dateLabel}
                               </div>
                               <div style={{ color: 'var(--accent-primary)' }}>
-                                Baseline Mean: {isDuration ? formatBaselineDuration(pt.mean, unit) : `${pt.mean} ${unit}`}
+                                Baseline Mean: {isDuration ? formatBaselineDuration(pt.mean, unit) : `${pt.mean} ${displayUnit}`}
                               </div>
                               <div style={{ color: 'var(--text-secondary)' }}>
                                 Std Dev: ±{isDuration ? formatBaselineDuration(pt.stddev, unit) : pt.stddev}

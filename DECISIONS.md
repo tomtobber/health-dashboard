@@ -431,3 +431,7 @@ Bounding snapshot computation per metric (up to 50 elapsed months per request) i
 ### Why session state is restored client-side instead of via backend autosave
 
 The user wants full manual control over named views via the existing explicit save button, with no automatic backend writes. The actual problem — losing on-screen state across a refresh/redeploy — is fully solved by persisting to `localStorage`, without introducing any automatic persistence into the named-view data model at all.
+
+### Why baseline calculation for steps aggregates by day (steps per day)
+
+In step tracking (such as Google Health interval data), steps are recorded across multiple intra-day interval points (e.g. 50 entries per day of 150 steps). Calculating a baseline directly across raw entries resulted in reporting the average size of interval chunks rather than the user's daily step volume. Baseline computation for steps groups entries by UTC calendar day and sums them first, calculating mean, sample standard deviation, min, and max across the user's daily step counts, with sample size reflecting observed days.

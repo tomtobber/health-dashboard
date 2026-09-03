@@ -288,4 +288,50 @@ describe('Phase 6 - Personal Baselines Service Layer', () => {
       );
     });
   });
+
+  describe('Steps Metric Aggregation (Steps Per Day)', () => {
+    it('calculates steps baseline by summing multiple intraday entries into steps per day', async () => {
+      const entries = [];
+      const dailyExpectedTotals = [10000, 8000, 12000, 9000, 11000, 7000, 13000, 8500, 10500, 9500];
+
+      for (let dayIndex = 0; dayIndex < dailyExpectedTotals.length; dayIndex++) {
+        const total = dailyExpectedTotals[dayIndex];
+        const dayNumber = 20 - dayIndex; // 20, 19, 18... 11
+        const part1 = Math.floor(total / 2);
+        const part2 = total - part1;
+
+        entries.push(
+          {
+            userId: testUserId,
+            provider: 'google_health',
+            metricType: 'steps',
+            startTime: new Date(Date.UTC(2026, 7, dayNumber, 10, 0, 0)),
+            endTime: new Date(Date.UTC(2026, 7, dayNumber, 11, 0, 0)),
+            valueNumeric: part1,
+            unit: 'count',
+          },
+          {
+            userId: testUserId,
+            provider: 'google_health',
+            metricType: 'steps',
+            startTime: new Date(Date.UTC(2026, 7, dayNumber, 16, 0, 0)),
+            endTime: new Date(Date.UTC(2026, 7, dayNumber, 17, 0, 0)),
+            valueNumeric: part2,
+            unit: 'count',
+          }
+        );
+      }
+
+      await db.insert(metricEntries).values(entries);
+
+      const baseline = await getMetricBaseline(testUserId, 'steps', 30, new Date(Date.UTC(2026, 7, 25, 0, 0, 0)));
+      expect(baseline.ok).toBe(true);
+      if (baseline.ok) {
+        expect(baseline.sampleSize).toBe(10);
+        expect(baseline.mean).toBe(9850);
+        expect(baseline.min).toBe(7000);
+        expect(baseline.max).toBe(13000);
+      }
+    });
+  });
 });

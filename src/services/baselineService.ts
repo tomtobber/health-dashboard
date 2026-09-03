@@ -82,6 +82,12 @@ function round2(val: number): number {
   return Object.is(res, -0) ? 0 : res;
 }
 
+export function isStepsMetric(metricType: string, unit?: string | null): boolean {
+  const m = metricType.toLowerCase();
+  const u = (unit || '').toLowerCase();
+  return m === 'steps' || m === 'daily-steps-count' || m.includes('step') || u === 'steps';
+}
+
 export function round3(val: number): number {
   const res = Math.round((val + Number.EPSILON) * 1000) / 1000;
   return Object.is(res, -0) ? 0 : res;
@@ -121,10 +127,23 @@ export async function computeMetricBaseline(
     );
   }
 
-  const values: number[] = [];
-  for (const entry of enriched.entries) {
-    if (typeof entry.valueNumeric === 'number' && !isNaN(entry.valueNumeric)) {
-      values.push(entry.valueNumeric);
+  let values: number[] = [];
+  if (isStepsMetric(enriched.metricType, enriched.unit)) {
+    // For steps, calculate steps per day (sum of entries per UTC calendar day)
+    const dailySums = new Map<string, number>();
+    for (const entry of enriched.entries) {
+      if (typeof entry.valueNumeric === 'number' && !isNaN(entry.valueNumeric)) {
+        const entryDate = new Date(entry.startTime);
+        const dayKey = entryDate.toISOString().slice(0, 10);
+        dailySums.set(dayKey, (dailySums.get(dayKey) || 0) + entry.valueNumeric);
+      }
+    }
+    values = Array.from(dailySums.values());
+  } else {
+    for (const entry of enriched.entries) {
+      if (typeof entry.valueNumeric === 'number' && !isNaN(entry.valueNumeric)) {
+        values.push(entry.valueNumeric);
+      }
     }
   }
 
@@ -298,11 +317,13 @@ export async function getMetricTrend(
   const windowStartMs = startTime.getTime();
   const points: { x: number; y: number }[] = [];
 
+  const isSteps = isStepsMetric(enriched.metricType, enriched.unit);
   for (const dayKey of sortedDays) {
     const d = dailyMeans.get(dayKey);
     if (!d) continue;
     const daysFromStart = (d.dateUtcMs - windowStartMs) / 86400000;
-    points.push({ x: daysFromStart, y: d.mean });
+    const dayVal = isSteps ? d.sum : d.mean;
+    points.push({ x: daysFromStart, y: dayVal });
   }
 
   const N = points.length;

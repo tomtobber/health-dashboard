@@ -259,6 +259,7 @@ Detailed contract/API/UI: `phases/phase5-detail.md`.
 
 - Mean, standard deviation, min, max, sample size.
 - Numeric/duration only; boolean/category requests are validation errors.
+- For steps metrics, intra-day interval entries are summed per UTC calendar day so baseline statistics (mean, stddev, min, max) represent steps per day.
 - Computed live from the canonical enriched reconciled read path.
 - Default window: 90 days.
 - Minimum sample size: 10.
