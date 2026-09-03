@@ -192,4 +192,75 @@ describe('MultiMetricPanel Recharts Real SVG Rendering & Time-Scaled Coordinates
     // Verify it is NOT the broken categorical ratio (1.00)
     expect(renderedRatio).not.toBeCloseTo(1.0, 1);
   });
+  test('aggregates multiple intra-day interval steps entries into steps per day', () => {
+    const stepsDataset: EnrichedMetricQueryResult[] = [
+      {
+        metricType: 'steps',
+        displayName: 'Steps',
+        valueType: 'numeric',
+        unit: 'count',
+        categoryValues: null,
+        isCustom: false,
+        isArchived: false,
+        entries: [
+          // Day 1: 3 entries totaling 10,000 steps
+          {
+            userId: 'u1',
+            provider: 'google_health',
+            metricType: 'steps',
+            startTime: '2026-08-01T08:00:00.000Z',
+            endTime: '2026-08-01T08:30:00.000Z',
+            valueNumeric: 3000,
+            unit: 'count',
+          },
+          {
+            userId: 'u1',
+            provider: 'google_health',
+            metricType: 'steps',
+            startTime: '2026-08-01T12:00:00.000Z',
+            endTime: '2026-08-01T12:45:00.000Z',
+            valueNumeric: 4000,
+            unit: 'count',
+          },
+          {
+            userId: 'u1',
+            provider: 'google_health',
+            metricType: 'steps',
+            startTime: '2026-08-01T18:00:00.000Z',
+            endTime: '2026-08-01T18:30:00.000Z',
+            valueNumeric: 3000,
+            unit: 'count',
+          },
+          // Day 2: 2 entries totaling 8,500 steps
+          {
+            userId: 'u1',
+            provider: 'google_health',
+            metricType: 'steps',
+            startTime: '2026-08-02T09:00:00.000Z',
+            endTime: '2026-08-02T09:30:00.000Z',
+            valueNumeric: 3500,
+            unit: 'count',
+          },
+          {
+            userId: 'u1',
+            provider: 'google_health',
+            metricType: 'steps',
+            startTime: '2026-08-02T15:00:00.000Z',
+            endTime: '2026-08-02T16:00:00.000Z',
+            valueNumeric: 5000,
+            unit: 'count',
+          },
+        ],
+      },
+    ];
+
+    const timeline = buildChartTimelineData(stepsDataset, true);
+
+    expect(timeline).toHaveLength(2);
+    expect(timeline[0].time).toBe('2026-08-01');
+    expect(timeline[0]['steps']).toBe(10000);
+
+    expect(timeline[1].time).toBe('2026-08-02');
+    expect(timeline[1]['steps']).toBe(8500);
+  });
 });

@@ -3,6 +3,7 @@ import { db, pool } from '../db';
 import { metricEntries, metricDefinitions } from '../db/schema';
 import { and, eq, gte, lte, isNull, inArray } from 'drizzle-orm';
 import { DatabaseError, ValidationError } from '../errors/AppError';
+import { isStepsMetric } from './baselineService';
 
 export interface MetricQueryFilter {
   userId: string;
@@ -406,15 +407,48 @@ export async function queryBatchEnrichedMetrics(filter: BatchMetricQueryFilter):
     let entriesByMetric: Map<string, NormalizedMetricEntry[]>;
 
     if (isWeekly || isDaily) {
-      entriesByMetric = await queryAggregatedMetricsFromDb(
-        userId,
-        metricTypes,
-        (!isWeekly ? sumMetricTypes : []),
-        startTime,
-        endTime,
-        dimension,
-        aggregation || (isWeekly ? 'weekly_avg' : 'daily_avg')
-      );
+      const stepsTypes = metricTypes.filter((mt) => isStepsMetric(mt));
+      const otherTypes = metricTypes.filter((mt) => !isStepsMetric(mt));
+
+      if (isWeekly && stepsTypes.length > 0) {
+        // Steps metric values are always aggregated as steps per day
+        const [otherMap, stepsMap] = await Promise.all([
+          otherTypes.length > 0
+            ? queryAggregatedMetricsFromDb(
+                userId,
+                otherTypes,
+                [],
+                startTime,
+                endTime,
+                dimension,
+                'weekly_avg'
+              )
+            : Promise.resolve(new Map<string, NormalizedMetricEntry[]>()),
+          queryAggregatedMetricsFromDb(
+            userId,
+            stepsTypes,
+            stepsTypes,
+            startTime,
+            endTime,
+            dimension,
+            'daily_avg'
+          ),
+        ]);
+
+        entriesByMetric = new Map<string, NormalizedMetricEntry[]>();
+        for (const [k, v] of otherMap.entries()) entriesByMetric.set(k, v);
+        for (const [k, v] of stepsMap.entries()) entriesByMetric.set(k, v);
+      } else {
+        entriesByMetric = await queryAggregatedMetricsFromDb(
+          userId,
+          metricTypes,
+          (!isWeekly ? sumMetricTypes : []),
+          startTime,
+          endTime,
+          dimension,
+          aggregation || (isWeekly ? 'weekly_avg' : 'daily_avg')
+        );
+      }
     } else {
       entriesByMetric = await queryScalarMetricEntriesFromDb(
         userId,

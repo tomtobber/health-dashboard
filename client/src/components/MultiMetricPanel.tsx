@@ -1,6 +1,6 @@
 import { buildChartTimelineData } from '../utils/timeScale';
 
-export function formatDurationValue(value: number, unit: string | null): string {
+export function formatDurationValue(value: number, unit: string | null, metricType?: string): string {
   if (unit === 'minutes') {
     const h = Math.floor(value / 60);
     const m = Math.round(value % 60);
@@ -8,7 +8,18 @@ export function formatDurationValue(value: number, unit: string | null): string 
     if (m === 0) return `${h}h`;
     return `${h}h ${m}m`;
   }
-  return unit ? `${value} ${unit}` : `${value}`;
+  const isSteps =
+    metricType === 'steps' ||
+    metricType === 'daily-steps-count' ||
+    (metricType && metricType.toLowerCase().includes('step')) ||
+    unit === 'steps';
+  if (isSteps) {
+    return `${Math.round(value).toLocaleString()} steps`;
+  }
+  if (unit === 'count') {
+    return `${value.toLocaleString()}`;
+  }
+  return unit ? `${value.toLocaleString()} ${unit}` : `${value.toLocaleString()}`;
 }
 
 
@@ -226,7 +237,7 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
               }}
             >
               <span>
-                {m.displayName} {m.unit ? `(${m.unit})` : ''}
+                {m.displayName} {m.unit && m.unit !== 'count' ? `(${m.unit})` : (m.metricType === 'steps' ? '(steps/day)' : '')}
                 {m.isArchived && ' [Archived]'}
               </span>
 
@@ -346,7 +357,7 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
                     orientation={idx % 2 === 0 ? 'left' : 'right'}
                     stroke={SERIES_COLORS[idx % SERIES_COLORS.length]}
                     fontSize={11}
-                    tickFormatter={(v) => formatDurationValue(v, m.unit)}
+                    tickFormatter={(v) => formatDurationValue(v, m.unit, m.metricType)}
                   />
                 ))}
                 <Tooltip
@@ -360,7 +371,7 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
                           {payload.map((entry: any, i: number) => {
                             const metric = metricMap.get(entry.dataKey);
                             const formattedVal = typeof entry.value === 'number'
-                              ? formatDurationValue(entry.value, metric?.unit || null)
+                              ? formatDurationValue(entry.value, metric?.unit || null, entry.dataKey)
                               : `${entry.value}`;
                             return (
                               <p key={i} style={{ fontSize: '0.8125rem', color: entry.color, fontWeight: 600 }}>
@@ -414,7 +425,7 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
                     orientation={idx % 2 === 0 ? 'left' : 'right'}
                     stroke={SERIES_COLORS[idx % SERIES_COLORS.length]}
                     fontSize={11}
-                    tickFormatter={(v) => formatDurationValue(v, m.unit)}
+                    tickFormatter={(v) => formatDurationValue(v, m.unit, m.metricType)}
                   />
                 ))}
                 <Tooltip
@@ -428,7 +439,7 @@ export const MultiMetricPanel: React.FC<MultiMetricPanelProps> = ({ panel, user,
                           {payload.map((entry: any, i: number) => {
                             const metric = metricMap.get(entry.dataKey);
                             const formattedVal = typeof entry.value === 'number'
-                              ? formatDurationValue(entry.value, metric?.unit || null)
+                              ? formatDurationValue(entry.value, metric?.unit || null, entry.dataKey)
                               : `${entry.value}`;
                             return (
                               <p key={i} style={{ fontSize: '0.8125rem', color: entry.color, fontWeight: 600 }}>
