@@ -41,13 +41,11 @@ describe('Client Dashboard Session Persistence & Debounce Cleanup', () => {
 
   test('edits persist to storage after debounce timer fires', () => {
     const viewId = 'view-123';
-    let debounceTimer: NodeJS.Timeout | null = null;
     const panels = [{ id: 'p1', metricTypes: ['heart-rate'] }];
 
     // Trigger edit
-    debounceTimer = setTimeout(() => {
+    setTimeout(() => {
       storage.setItem(getDraftKey(viewId), JSON.stringify(panels));
-      debounceTimer = null;
     }, 500);
 
     // Immediately before 500ms, draft not yet saved
